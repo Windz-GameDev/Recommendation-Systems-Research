@@ -1,0 +1,8 @@
+# Ignore environment variables file
+.env
+
+# Ignore all files in the images folder
+images/*
+
+# Do not ignore the .gitignore file in the images folder
+!images/.gitignore
