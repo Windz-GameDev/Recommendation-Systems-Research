@@ -17,7 +17,7 @@ This repository contains the code and resources for a research project focused o
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd <repository-directory>
+git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd Recommendation-Systems-Research
 ```
 
 2. Install the required Python packages:
@@ -58,6 +58,10 @@ pip install -r requirements.txt
 ## LLM API Integration
 
 This application is designed to work with a locally running LLM model that exposes an OpenAPI-compatible API on port 5001. An example application for running local LLMs is [KoboldCPP](https://github.com/LostRuins/koboldcpp), which allows you to run language models on your local machine. Ensure that the LLM model is running and accessible at `http://localhost:5001/v1/chat/completions` before executing llm_recommendation_system.py. 
+
+### LLM Model
+
+The project uses the [Phi-3-mini-4k-instruct-gguf](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) model from Hugging Face for the LLM. This model is designed to provide high-quality language understanding and generation capabilities.
 
 ## Datasets
 
