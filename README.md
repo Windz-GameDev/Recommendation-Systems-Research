@@ -55,6 +55,10 @@ pip install -r requirements.txt
 - **Surprise Library**: Utilizes the Surprise library for collaborative filtering and recommendation algorithm implementation.
 - **Cinemagoer API**: Integrates with the IMDb database to fetch movie information and descriptions.
 
+## LLM API Integration
+
+This application is designed to work with a locally running LLM model that exposes an OpenAPI-compatible API on port 5001. An example application for running local LLMs is [KoboldCPP](https://github.com/LostRuins/koboldcpp), which allows you to run language models on your local machine. Ensure that the LLM model is running and accessible at `http://localhost:5001/v1/chat/completions` before executing llm_recommendation_system.py. 
+
 ## Datasets
 
 - **MovieLens**: The project uses the MovieLens dataset for training and evaluating the recommendation system.
