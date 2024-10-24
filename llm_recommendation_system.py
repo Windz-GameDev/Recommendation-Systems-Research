@@ -154,7 +154,7 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, n=10, threshold=4.0):
             top_n_recommendations = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, n)
 
             # Check if the left-out movie is in the top N recommendations
-            if movie_id in [rec_movie_id for rec_movie_id, _ in top_n_recommendations]:
+            if movie_id in [rec_movie_id for rec_movie_id, _, _ in top_n_recommendations]:
                 hit_count += 1
             
     # Calculate hit rate
@@ -523,7 +523,6 @@ reader = Reader(rating_scale=(0.5, 5.0))
 # The reader object is also required with the rating_scale parameter specified.
 data = Dataset.load_from_df(ratings_dataframe[['userId', 'movieId', 'rating']], reader)
 
-'''
 # Split the data into train and test sets
 trainset, testset = train_test_split(data, test_size=0.2)
 
@@ -552,7 +551,6 @@ print(f"Normal Hit Rate (threshold=0): {normal_hit_rate:.2f}")
 print("Calculating Cumulative Hit Rate...\n")
 cumulative_hit_rate = calculate_cumulative_hit_rate(algo_for_cumulative_hit_rate, ratings_dataframe, n=10, threshold=4.0)
 print(f"Cumulative Hit Rate (threshold=4.0): {cumulative_hit_rate:.2f}")
-'''
 
 # Load the links dataset into a pandas dataframe
 links_dataframe = pd.read_csv(links_path)
