@@ -6,3 +6,9 @@ images/*
 
 # Do not ignore the .gitignore file in the images folder
 !images/.gitignore
+
+# Ignore old Gemini code 
+old_gemini_code.py
+
+# Ignore Gemini Integration
+gemini_integration.py
