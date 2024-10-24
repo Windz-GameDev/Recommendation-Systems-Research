@@ -1,8 +1,9 @@
 
 import google.generativeai as genai
+from dotenv import load_dotenv
 import PIL.Image
 import os
-from dotenv import load_dotenv
+
 
 # Load environment variables from the .env file
 load_dotenv()
