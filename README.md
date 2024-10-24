@@ -17,7 +17,7 @@ This repository contains the code and resources for a research project focused o
 1. Clone the repository:
 
 ```bash
-git clone <repository-url> cd <repository-directory>
+git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd <repository-directory>
 ```
 
 2. Install the required Python packages:
