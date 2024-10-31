@@ -19,6 +19,7 @@ import time
 # Used to select a random movie to drop for use as the test set when calculating hit rate
 import random
 
+import os
 
 # Function to create mapping dictionaries between MovieLens Movie IDs and Movie titles
 def create_movie_mappings(movies_df):
@@ -370,6 +371,7 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
                     return None
             else:
                 print(f"Attempt {attempt + 1} failed: {e}")
+                print("") # Print nothing right now
 
         attempt += 1
         if attempt < max_retries:
@@ -379,34 +381,156 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
             #print(f"Max retries reached. Could not fetch the plot for {movie_title}.")
             return None
 
+def load_cached_descriptions():
+    """
+    Loads cached movie descriptions from a CSV file.
+
+    This function attempts to load movie descriptions from a cached CSV file.
+    If the file exists, it reads the descriptions into a pandas DataFrame.
+    If the file doesn't exist, it creates an empty DataFrame with the appropriate columns.
+
+    The CSV file is stored in the 'Datasets/Descriptions' directory relative to the script's location.
+    If this directory doesn't exist, it is created automatically.
+
+    Parameters:
+    None
+
+    Returns:
+    pandas.DataFrame: A DataFrame containing cached movie descriptions.
+        - If the CSV file exists, it contains the loaded data.
+        - If the CSV file doesn't exist, it contains columns 'movieId' and 'description' with no data.
+
+    Notes:
+    - The function uses the script's location to determine the path to the CSV file.
+    - If the CSV file is found, it is read using pandas' read_csv function.
+    - If the CSV file is not found, an empty DataFrame is created with the required columns.
+    """
+
+     # Get the directory of the current script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Define the path to the 'Descriptions' directory within 'Datasets'
+    descriptions_dir = os.path.join(base_dir, 'Datasets', 'Descriptions')
+    
+    # Create the 'Descriptions' directory if it doesn't exist
+    os.makedirs(descriptions_dir, exist_ok=True)
+    
+    # Define the path to the 'movie_descriptions.csv' file within the 'Descriptions' directory
+    descriptions_csv = os.path.join(descriptions_dir, 'movie_descriptions.csv')
+
+    # Check if the CSV file exists
+    if os.path.exists(descriptions_csv):
+        # If it exists, read the CSV file into a pandas DataFrame and return it
+        return pd.read_csv(descriptions_csv)
+    else:
+        # If it doesn't exist, return an empty DataFrame with 'movieId' and 'description' columns
+        return pd.DataFrame(columns=['movieId', 'description'])
+
+def save_cached_descriptions(cached_descriptions):
+    """
+    Saves the cached movie descriptions to a CSV file.
+
+    This function takes a DataFrame containing movie descriptions and saves it to a CSV file
+    located in the 'Descriptions' directory within the 'Datasets' folder. The CSV file is named
+    'movie_descriptions.csv'. If the directory does not exist, it is created automatically.
+
+    Parameters:
+    - cached_descriptions (pandas.DataFrame): A DataFrame containing movie descriptions with
+      columns 'movieId' and 'description'. Each row represents a movie and its corresponding
+      description.
+
+    Notes:
+    - The index of the DataFrame is not saved to the CSV file, ensuring that only the data
+      columns ('movieId' and 'description') are written.
+    - The function uses the script's location to determine the path to the CSV file.
+    """
+
+    # Get the directory of the current script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Define the path to the 'Descriptions' directory within 'Datasets'
+    descriptions_dir = os.path.join(base_dir, 'Datasets', 'Descriptions')
+
+    # Define the path to the 'movie_descriptions.csv' file within the 'Descriptions' directory
+    descriptions_csv = os.path.join(descriptions_dir, 'movie_descriptions.csv')
+
+    # Save the DataFrame to a CSV file
+    cached_descriptions.to_csv(descriptions_csv, index=False)
+
+
 def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selected_chat_format, max_retries, delay_between_attempts):
 
     """
     Retrieves movie descriptions for a list of top N movies using their IMDb IDs.
 
+    This function attempts to retrieve movie descriptions for a given list of top N movies.
+    It first checks if a description is available in the cache. If not, it tries to fetch the
+    description from IMDb. If the description is still unavailable, it generates one using
+    few-shot prompting with a language model. All new descriptions are cached for future use.
+
     Parameters:
-    - top_n_movies (list): A list of tuples containing movie IDs and their estimated ratings.
-    - combined_dataframe (DataFrame): A DataFrame containing movie information, including IMDb IDs.
+    - top_n_movies (list): A list of tuples, each containing a movie ID, movie title, and estimated rating.
+    - combined_dataframe (pandas.DataFrame): A DataFrame containing movie information, including IMDb IDs.
+    - model_name (str): The name of the language model to use for generating descriptions.
+    - selected_chat_format (str): The format string to structure the few-shot examples and movie title.
+    - max_retries (int): The maximum number of retry attempts for fetching movie data.
+    - delay_between_attempts (int): The delay in seconds between retry attempts.
 
     Returns:
     - descriptions (dict): A dictionary mapping movie IDs to their descriptions.
+
+    Notes:
+    - The function uses a caching mechanism to store and retrieve movie descriptions, reducing the need
+      for repeated API calls or description generation.
+    - If a description is not found in the cache, the function attempts to retrieve it from IMDb using
+      the `get_movie_with_retries` function.
+    - If the IMDb retrieval fails, a description is generated using the `generate_description_with_few_shot` function.
+    - New descriptions are appended to the cache and saved to a CSV file for future use.
     """
+
+    # Initalize an empty dictionary to store movie descriptions for the movies stored top_n_movies
     descriptions = {}
-    for index, (movie_id, movie_title, _) in enumerate(top_n_movies):
-        if index % 10 == 0:
+
+    # Load cached descriptions from a CSV file
+    cached_descriptions = load_cached_descriptions()
+
+    # Track the last time the message was printed
+    last_print_time = time.time()
+
+    # Iterate over the list of top N movies
+    for movie_id, movie_title, _ in top_n_movies:
+        
+        current_time = time.time()
+        # Check if 10 seconds have passed since the last time the message was printed 
+        if current_time - last_print_time >= 10:
             print("Retrieving movie descriptions...")
+            last_print_time = current_time
+
+        # Check if we have a cached description for the current movie
+        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description']
+        if not cached_description.empty:
+            descriptions[movie_id] = cached_description.iloc[0]
+            continue
 
         imdb_id = combined_dataframe.loc[combined_dataframe['movieId'] == movie_id, 'imdbId'].values[0]
         movie = get_movie_with_retries(imdb_id, movie_title, model_name, selected_chat_format, max_retries, delay_between_attempts)
         if movie and 'plot' in movie:
-            descriptions[movie_id] = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
+            description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
         else:
             # Could not find a description, as a last resort, generate a description using few shot prompting
-            descriptions[movie_id] = generate_description_with_few_shot(movie_title, model_name, selected_chat_format)
+            description = generate_description_with_few_shot(movie_title, model_name, selected_chat_format)
             # print(descriptions[movie_id])
-            # descriptions[movie_id] = f"No description available for {movie_title}."
-    return descriptions
 
+        # Store the description in the dictionary
+        descriptions[movie_id] = description
+
+        # Append the new description to the cached descriptions DataFrame
+        cached_descriptions = pd.concat([cached_descriptions, pd.DataFrame([{'movieId': movie_id, 'description': description}])], ignore_index=True)
+
+    # Saved the updated cache descriptions back to the CSV file    
+    save_cached_descriptions(cached_descriptions)
+
+    return descriptions
 
 def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url="http://localhost:5001/v1/chat/completions"):
     """
@@ -812,8 +936,11 @@ def main():
 
     print("\n")
 
+
+    print("Now the LLM will personalize the recommendations to your tastes, please wait until processing has completed.\n")
+
     # Get movie descriptions
-    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, selected_chat_format, max_retries=5, delay_between_attempts=0.01)
+    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, selected_chat_format, max_retries=5, delay_between_attempts=1)
 
     print("\n")
 
