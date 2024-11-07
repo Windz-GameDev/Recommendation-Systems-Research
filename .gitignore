@@ -12,3 +12,16 @@ old_gemini_code.py
 
 # Ignore Gemini Integration
 gemini_integration.py
+
+# Ignore datasets but keep cached descriptions
+Datasets/Movie_Lens_Datasets/ml-32m/tags.csv
+Datasets/Movie_Lens_Datasets/ml-32m/ratings.csv
+Datasets/Movie_Lens_Datasets/ml-32m/movies.csv
+Datasets/Movie_Lens_Datasets/ml-32m/links.csv
+Datasets/Movie_Lens_Datasets/ml-latest-small/tags.csv
+Datasets/Movie_Lens_Datasets/ml-latest-small/ratings.csv
+Datasets/Movie_Lens_Datasets/ml-latest-small/movies.csv
+Datasets/Movie_Lens_Datasets/ml-latest-small/links.csv
+Datasets/Movie_Lens_Datasets/ml-32m/README.txt
+Datasets/Movie_Lens_Datasets/ml-latest-small/README.txt
+Datasets/Movie_Lens_Datasets/ml-32m/checksums.txt

@@ -381,84 +381,55 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
             #print(f"Max retries reached. Could not fetch the plot for {movie_title}.")
             return None
 
-def load_cached_descriptions():
+def load_cached_descriptions(descriptions_path):
     """
     Loads cached movie descriptions from a CSV file.
 
     This function attempts to load movie descriptions from a cached CSV file.
     If the file exists, it reads the descriptions into a pandas DataFrame.
-    If the file doesn't exist, it creates an empty DataFrame with the appropriate columns.
-
-    The CSV file is stored in the 'Datasets/Descriptions' directory relative to the script's location.
-    If this directory doesn't exist, it is created automatically.
+    If the file doesn't exist, it creates an empty DataFrame with the appropriate columns
+    and saves it to the specified path.
 
     Parameters:
-    None
+    - descriptions_path (str): The path to the descriptions CSV file.
 
     Returns:
     pandas.DataFrame: A DataFrame containing cached movie descriptions.
         - If the CSV file exists, it contains the loaded data.
         - If the CSV file doesn't exist, it contains columns 'movieId' and 'description' with no data.
-
-    Notes:
-    - The function uses the script's location to determine the path to the CSV file.
-    - If the CSV file is found, it is read using pandas' read_csv function.
-    - If the CSV file is not found, an empty DataFrame is created with the required columns.
     """
 
-     # Get the directory of the current script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Define the path to the 'Descriptions' directory within 'Datasets'
-    descriptions_dir = os.path.join(base_dir, 'Datasets', 'Descriptions')
-    
-    # Create the 'Descriptions' directory if it doesn't exist
-    os.makedirs(descriptions_dir, exist_ok=True)
-    
-    # Define the path to the 'movie_descriptions.csv' file within the 'Descriptions' directory
-    descriptions_csv = os.path.join(descriptions_dir, 'movie_descriptions.csv')
-
-    # Check if the CSV file exists
-    if os.path.exists(descriptions_csv):
+    # Check if the descriptions CSV file exists
+    if os.path.exists(descriptions_path):
         # If it exists, read the CSV file into a pandas DataFrame and return it
-        return pd.read_csv(descriptions_csv)
+        return pd.read_csv(descriptions_path)
     else:
         # If it doesn't exist, return an empty DataFrame with 'movieId' and 'description' columns
         return pd.DataFrame(columns=['movieId', 'description'])
-
-def save_cached_descriptions(cached_descriptions):
+    
+def save_cached_descriptions(cached_descriptions, descriptions_path):
     """
     Saves the cached movie descriptions to a CSV file.
 
     This function takes a DataFrame containing movie descriptions and saves it to a CSV file
-    located in the 'Descriptions' directory within the 'Datasets' folder. The CSV file is named
-    'movie_descriptions.csv'. If the directory does not exist, it is created automatically.
+    located at the specified path. If the file does not exist, it is created automatically.
 
     Parameters:
     - cached_descriptions (pandas.DataFrame): A DataFrame containing movie descriptions with
       columns 'movieId' and 'description'. Each row represents a movie and its corresponding
       description.
+    - descriptions_path (str): The path to the descriptions CSV file.
 
     Notes:
     - The index of the DataFrame is not saved to the CSV file, ensuring that only the data
       columns ('movieId' and 'description') are written.
-    - The function uses the script's location to determine the path to the CSV file.
     """
 
-    # Get the directory of the current script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Define the path to the 'Descriptions' directory within 'Datasets'
-    descriptions_dir = os.path.join(base_dir, 'Datasets', 'Descriptions')
-
-    # Define the path to the 'movie_descriptions.csv' file within the 'Descriptions' directory
-    descriptions_csv = os.path.join(descriptions_dir, 'movie_descriptions.csv')
-
     # Save the DataFrame to a CSV file
-    cached_descriptions.to_csv(descriptions_csv, index=False)
+    cached_descriptions.to_csv(descriptions_path, index=False)
 
 
-def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selected_chat_format, max_retries, delay_between_attempts):
+def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selected_chat_format, descriptions_path, max_retries, delay_between_attempts):
 
     """
     Retrieves movie descriptions for a list of top N movies using their IMDb IDs.
@@ -475,6 +446,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
     - selected_chat_format (str): The format string to structure the few-shot examples and movie title.
     - max_retries (int): The maximum number of retry attempts for fetching movie data.
     - delay_between_attempts (int): The delay in seconds between retry attempts.
+    - descriptions_path (str): The path to the descriptions CSV file.
 
     Returns:
     - descriptions (dict): A dictionary mapping movie IDs to their descriptions.
@@ -492,7 +464,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
     descriptions = {}
 
     # Load cached descriptions from a CSV file
-    cached_descriptions = load_cached_descriptions()
+    cached_descriptions = load_cached_descriptions(descriptions_path)
 
     # Track the last time the message was printed
     last_print_time = time.time()
@@ -528,7 +500,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
         cached_descriptions = pd.concat([cached_descriptions, pd.DataFrame([{'movieId': movie_id, 'description': description}])], ignore_index=True)
 
     # Saved the updated cache descriptions back to the CSV file    
-    save_cached_descriptions(cached_descriptions)
+    save_cached_descriptions(cached_descriptions, descriptions_path)
 
     return descriptions
 
@@ -722,20 +694,39 @@ def test_api_call(model_name, user_message, chat_format, url="http://localhost:5
 
 def main():
 
-    # Define MovieLens file paths
+    # Explain the differences between the datasets
+    print("Please choose a dataset to use for the recommendation system:")
+    print("1. MovieLens small movie ratings: A smaller dataset with fewer movies and ratings, suitable for quick testing and development.")
+    print("2. MovieLens 32M movie ratings: A larger dataset with more movies and ratings, providing more accurate recommendations but requiring more processing time.")
+
+    # Ask the user to choose a dataset
+    dataset_choice = input("Enter 1 for MovieLens small or 2 for MovieLens 32M: ").strip()
+
+    # Set the file paths based on the user's choice
+    if dataset_choice == "1": # User selected the small dataset
+        base_path = os.path.join('Datasets', 'Movie_Lens_Datasets', 'ml-latest-small')
+
+    elif dataset_choice == "2": # User selected the normal size dataset
+        base_path = os.path.join('Datasets', 'Movie_Lens_Datasets', 'ml-32m')
+    else: 
+        print("Invalid choice. Defaulting to MovieLens small movie ratings dataset.")
+        base_path = os.path.join('Datasets', 'Movie_Lens_Datasets', 'ml-latest-small')
 
     # Contains userId, movieId, rating, timestamp
-    ratings_path = 'Datasets/Movie_Lens_Datasets/ml-latest-small/ratings.csv'
+    ratings_path = os.path.join(base_path, 'ratings.csv')
 
     # Contains movieId, title, genres
-    movies_path = 'Datasets/Movie_Lens_Datasets/ml-latest-small/movies.csv'
-
+    movies_path = os.path.join(base_path, 'movies.csv')
+    
     # Contains movieId, imdbId, tmdbId. Essentially this serves as a mapping from MovieLens's movieID to Internet Movie Database's and The Movie Database's movie ids.
-    links_path = 'Datasets/Movie_Lens_Datasets/ml-latest-small/links.csv'
-
+    links_path = os.path.join(base_path, 'links.csv')
+   
     # Contains userId, movieId, tag, timestamp. Allows us to see what keywords and phrases users associated with different movies. 
     # This can allow us to better understand the content of movies when analyzing user preferences.
-    tags_path = 'Datasets/Movie_Lens_Datasets/ml-latest-small/tags.csv'
+    tags_path = os.path.join(base_path, 'tags.csv')
+
+    # Contains movieId, description. This allows for quicker description retrieval and will be filled out as we retrieve descriptions from IMDb or generate them.
+    descriptions_path = os.path.join(base_path, 'descriptions.csv')
 
     # Load the ratings dataset into a pandas dataframe
     ratings_dataframe = pd.read_csv(ratings_path)
@@ -940,7 +931,7 @@ def main():
     print("Now the LLM will personalize the recommendations to your tastes, please wait until processing has completed.\n")
 
     # Get movie descriptions
-    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, selected_chat_format, max_retries=5, delay_between_attempts=1)
+    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, selected_chat_format, descriptions_path, max_retries=5, delay_between_attempts=1)
 
     print("\n")
 

@@ -7,22 +7,29 @@ This work is part of a GRE research project at the University of North Florida b
 
 ## Key Features
 
-- **Traditional Recommendation Algorithms**: At the core of our system, we utilize proven recommendation algorithms like SVD to generate initial movie recommendations based on user ratings and preferences.
-- **LLM-Enhanced Fuzzy Matching**: To improve the accuracy of movie identification, we employ LLMs to perform fuzzy matching of movie titles. This allows our system to handle variations in user input and find the closest matches even when exact titles are not provided.
-- **LLM-Powered Similarity Scoring**: We take the recommendation process a step further by using LLMs to generate similarity scores between user preferences and movie descriptions. This enables us to better match user interests with relevant movies, enhancing the personalization of recommendations.
-- **IMDb Integration**: Our system seamlessly integrates with the IMDb database to retrieve rich movie information, including descriptions, plots, and reviews. This additional context is used by the LLMs to generate more accurate similarity scores and provide comprehensive movie details to users.
-- **Personalized Recommendations**: By combining the strengths of traditional recommendation algorithms like SVD with the advanced capabilities of LLMs, our system generates highly personalized movie recommendations tailored to each user's unique tastes and preferences.
-- **Scalable Architecture**: The recommendation system is designed to handle large-scale datasets and can efficiently process millions of movies and user interactions, ensuring a smooth and responsive user experience.
+1. **Scalable Architecture**: The recommendation system is designed to handle large-scale datasets and can efficiently process millions of movies and user interactions, ensuring a smooth and responsive user experience.
+
+2. **User Preference Input**: Users provide their movie preferences by rating a set of movies they love. This information is used to understand their tastes and serve as input for both the SVD algorithm and the LLMs.
+
+3. **Traditional Recommendation Algorithms**: At the core of our system, we utilize proven recommendation algorithms like SVD to generate initial movie recommendations based on user ratings and preferences.
+
+4. **IMDb Integration**: Our system seamlessly integrates with the IMDb database to retrieve rich movie information, including descriptions, plots, and reviews. This additional context is used by the LLMs to generate more accurate similarity scores and provide comprehensive movie details to users.
+
+5. **LLM-Enhanced Fuzzy Matching**: To improve the accuracy of movie identification, we employ LLMs to perform fuzzy matching of movie titles. This allows our system to handle variations in user input and find the closest matches even when exact titles are not provided.
+
+6. **LLM-Powered Similarity Scoring**: We take the recommendation process a step further by using LLMs to generate similarity scores between user preferences and movie descriptions. This enables us to better match user interests with relevant movies, enhancing the personalization of recommendations.
+
+7. **Personalized Recommendations**: By combining the strengths of traditional recommendation algorithms like SVD with the advanced capabilities of LLMs, our system generates highly personalized movie recommendations tailored to each user's unique tastes and preferences.
 
 ## How It Works
 
-1. **Data Preparation**: The system begins by loading the MovieLens dataset, which contains user ratings, movie information, and links to IMDb. It establishes mappings between MovieLens movie IDs, IMDb IDs, and movie titles to facilitate seamless data integration.
+1. **Data Preparation**: The system begins by loading the MovieLens dataset, which contains user ratings, movie information, and links to IMDb. It establishes mappings between MovieLens movie IDs, IMDb IDs, and movie titles to facilitate seamless data integration. The user can choose between the 32M size dataset and the 100k size dataset, depending on their computational resources and desired dataset size.
 
-2. **Traditional Recommendation Algorithm**: We employ the SVD algorithm to generate initial movie recommendations based on user ratings and preferences. SVD identifies latent factors that capture the underlying patterns in user-movie interactions, allowing for effective recommendation generation.
+2. **User Preference Input**: Users provide their movie preferences by rating a set of movies they love. This information is used to understand their tastes and serve as input for both the SVD algorithm and the LLMs.
 
-3. **User Preference Input**: Users provide their movie preferences by rating a set of movies they love. This information is used to understand their tastes and serve as input for both the SVD algorithm and the LLMs.
+3. **Traditional Recommendation Algorithm**: We employ the SVD algorithm to generate initial movie recommendations based on user ratings and preferences. SVD identifies latent factors that capture the underlying patterns in user-movie interactions, allowing for effective recommendation generation.
 
-4. **Movie Description Retrieval**: For each movie in the dataset, the system retrieves the corresponding movie descriptions from the IMDb database using the Cinemagoer API. If an exact match is not found, LLMs are employed for fuzzy matching to find the closest match, ensuring comprehensive movie information is available. If a description can't be found, then the system will generate one with an LLM that comes close in quality to one that has been handwritten. 
+4. **Movie Description Retrieval**: For each movie in the N \* 10 recommendations generated by the SVD algorithm, the system retrieves the corresponding movie descriptions from the IMDb database using the Cinemagoer API. If an exact match is not found, LLMs are employed for fuzzy matching to find the closest match, ensuring comprehensive movie information is available. If a description can't be found, then the system will generate one with an LLM that comes close in quality to one that has been handwritten.
 
 5. **LLM-Enhanced Similarity Scoring**: The system uses LLMs to generate similarity scores between the user's preferences and each movie description. It constructs prompts for the LLM using few-shot examples to guide the model in generating accurate similarity scores. These scores are used to refine and personalize the recommendations generated by the SVD algorithm.
 
@@ -32,15 +39,13 @@ This work is part of a GRE research project at the University of North Florida b
 
 ## Current Status and Future Goals
 
-The LLM-Enhanced Movie Recommendation System has made significant progress, with both sets of recommendations (traditional SVD and LLM-enhanced) being generated successfully. User profiles can now be generated and utilized in the SVD algorithm to provide personalized recommendations.
+The LLM-Enhanced Movie Recommendation System has made significant progress, with both sets of recommendations (traditional SVD and LLM-enhanced) being generated successfully. User profiles can now be generated and utilized in the SVD algorithm to provide personalized recommendations. The recommendation system currently supports both the 32M size dataset and the 100k MovieLens dataset sizes, allowing users to choose based on their computational resources and desired dataset size. We plan to continue supporting multiple dataset sizes to accommodate different user requirements and ensure the system remains flexible and adaptable.
 
 However, we acknowledge that there is room for further improvement and have identified several future goals to enhance the system:
 
 1. **Upgrading to a More Powerful LLM**: We aim to improve the results even further by upgrading from the current 4B parameter model to a more powerful one, such as Llama 70B. This will enable us to generate more accurate and nuanced similarity scores between user preferences and movie descriptions.
 
-2. **Switching to a Larger MovieLens Dataset**: To address potential biases and expand the movie catalog, we plan to switch to a larger version of the MovieLens dataset. This will provide a more diverse and representative set of movies for generating recommendations, ensuring a wider range of user preferences can be accommodated.
-
-3. **Parallelizing Movie Description Retrieval**: We have identified that retrieving movie descriptions from IMDb can be a time-consuming process. To optimize this step, we plan to explore parallelization techniques, which will help speed up the retrieval process and improve the overall efficiency of the recommendation system.
+2. **Parallelizing Movie Description Retrieval**: We have identified that retrieving movie descriptions from IMDb can be a time-consuming process. To optimize this step, we plan to explore parallelization techniques, which will help speed up the retrieval process and improve the overall efficiency of the recommendation system.
 
 Despite these areas for improvement, we are confident that our current system is making good and relevant movie recommendations. The integration of LLMs with traditional SVD has shown promising results, and we believe that with the planned enhancements, the LLM-Enhanced Movie Recommendation System will continue to provide highly personalized and accurate movie suggestions to users.
 
@@ -60,19 +65,29 @@ git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd Re
 pip install -r requirements.txt
 ```
 
-3. Set up the local LLM model:
+3.  Set up the local LLM model:
 
-   - Ensure that you have a locally running LLM model that exposes an OpenAPI-compatible API on port 5001.
-   - The LLM model should be accessible at `http://localhost:5001/v1/chat/completions`.
-   - An example application for running local LLMs that meets both of the above criteria is [KoboldCPP](https://github.com/LostRuins/koboldcpp), which allows you to run language models on your local machine.
+    - Ensure that you have a locally running LLM model that exposes an OpenAPI-compatible API on port 5001.
+    - The LLM model should be accessible at `http://localhost:5001/v1/chat/completions`.
+    - An example application for running local LLMs that meets both of the above criteria is [KoboldCPP](https://github.com/LostRuins/koboldcpp), which allows you to run language models on your local machine.
 
-4. Prepare the dataset:
+4.  Prepare the dataset:
 
-   - Download the MovieLens dataset and place it in the `Datasets` directory if missing. (Files are already included in the repo)
-   - Ensure that the dataset files (`ratings.csv`, `movies.csv`, `links.csv`) are present.
-   - The project uses the [Phi-3-mini-4k-instruct-gguf](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) model from Hugging Face for the LLM. This model is designed to provide high-quality language understanding and generation capabilities.
+    - The recommendation system supports both the MovieLens 32M size dataset and the MovieLens latest 100k size dataset. Choose the appropriate dataset based on your computational resources and desired dataset size.
+    - The MovieLens datasets are not included in the repository due to their large size. You need to download them manually:
+      - a. Create a `Datasets` folder in the root of your project if it doesn't exist already.
+      - b. Inside the `Datasets` folder, create a `Movie_Lens_Datasets` folder.
+      - c. Download the MovieLens dataset of your choice:
+        - For the 32M dataset: Go to https://grouplens.org/datasets/movielens/32m/ and download "ml-32m.zip"
+        - For the 100k katest dataset: Go to https://grouplens.org/datasets/movielens/latest/ and download "ml-latest-small.zip"
+      - d. Extract the folder from within the zip file, open it, and then drag its contents into the correct dataset folder:
+        - For 32M dataset: `Datasets/Movie_Lens_Datasets/ml-32m/`
+        - For 100k latest dataset: `Datasets/Movie_Lens_Datasets/ml-latest-small/`
+    - Ensure that the dataset files (`ratings.csv`, `movies.csv`, `links.csv`) are present in the extracted folder.
+    - The project uses the [Phi-3-mini-4k-instruct-gguf](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) model from Hugging Face for the LLM. This model is designed to provide high-quality language understanding and generation capabilities.
+    - The `descriptions.csv` file is included in the repository and will be automatically downloaded when you clone the project. This file contains cached movie descriptions to speed up the recommendation process.
 
-5. Run the recommendation system:
+5.  Run the recommendation system:
 
 ```bash
 python llm_recommendation_system.py
