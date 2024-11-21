@@ -18,7 +18,7 @@ import time
 
 # Used to select a random movie to drop for use as the test set when calculating hit rate
 import random
-
+import argparse
 import os
 
 # Function to create mapping dictionaries between MovieLens Movie IDs and Movie titles
@@ -192,21 +192,20 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, n=10, th
 
     return hit_rate 
 
-def generate_description_with_few_shot(movie_title, model_name, selected_description_chat_format, url="http://localhost:5001/v1/chat/completions"):
+def generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers):
     """
     Generate a movie description using few-shot prompting with a language model.
     
     Parameters:
     - movie_title (str): The title of the movie.
     - model_name (str): The name of the model to use for generating the description.
-    - selected_description_chat_format (str): The format string to structure the few-shot examples and movie title.
+    - chat_format (str): The format string to structure the few-shot examples and movie title.
     - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
 
     Returns: 
     = str: The generated movie description.
     """
-
-    headers = {"Content-Type": "application/json"}
 
     # Few-shot examples
     few_shot_examples = (
@@ -219,7 +218,7 @@ def generate_description_with_few_shot(movie_title, model_name, selected_descrip
     )
 
     # Format the prompt using the provided chat format 
-    prompt = selected_description_chat_format.format(prompt=few_shot_examples + "Now, generate a description for the following movie:\n" + f"Movie title: {movie_title}\nDescription:")
+    prompt = chat_format.format(prompt=few_shot_examples + "Now, generate a description for the following movie:\n" + f"Movie title: {movie_title}\nDescription:")
 
     payload = {
         "model": model_name,
@@ -235,9 +234,9 @@ def generate_description_with_few_shot(movie_title, model_name, selected_descrip
     if response.status_code == 200:
         return response.json().get("choices", [])[0].get("message", {}).get("content", "").strip()
     else:
-        return "No description could be found or generated."
+        return ""
     
-def get_imdb_id_by_title(title, model_name, chat_format, url="http://localhost:5001/v1/chat/completions"):
+def get_imdb_id_by_title(title, model_name, chat_format, url, headers):
     '''
     Retrieve the IMDb ID for a movie given its title, using LLM for fuzzy matching if necessary.
 
@@ -246,6 +245,7 @@ def get_imdb_id_by_title(title, model_name, chat_format, url="http://localhost:5
     - model_name (str): The name of the model to use for generating the similarity score.
     - chat_format (str): A format string to structure the user input and movie description
     - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
 
     Returns:
     - str: The IMDb ID of the movie, or None if not found.
@@ -266,7 +266,6 @@ def get_imdb_id_by_title(title, model_name, chat_format, url="http://localhost:5
                     return imdb_id
 
         # If no exact match is found, use LLM to find the best match
-        headers = {"Content-Type": "application/json"}
         best_match = None
         highest_similarity = -1  
 
@@ -336,7 +335,7 @@ def get_imdb_id_by_title(title, model_name, chat_format, url="http://localhost:5
         print(f"An error occured while searching for movie {title}'s IMDb ID: {e}")
         return None
 
-def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_retries=10, delay=1):
+def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries=10, delay=1):
     
     """
     Attempts to retrieve a movie object with plot and reviews from IMDb, retrying if necessary.
@@ -344,12 +343,13 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
     Parameters:
     - imdb_id (str): The IMDb ID of the movie to retrieve.
     - max_retries (int): The maximum number of retry attempts. Defaults to 10.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
     - delay (int): The delay in seconds between retry attempts. Defaults to 1.
 
     Returns:
-    - movie (dict): The movie object containing plot and reviews if successful, otherwise None.
+    - movie (dict): The movie object containing plot if successful, otherwise None.
     """
-
     ia = Cinemagoer()
     attempt = 0
     movie = None
@@ -365,7 +365,7 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
             # Check if the error is an HTTP 404 error
             if 'HTTPError 404' in str(e):
                 print(f"HTTP 404 error encountered for {movie_title}'s IMDd ID {imdb_id}.  Attempting to find IMDb ID by title.")
-                imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format)
+                imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, url, headers)
                 if not imdb_id:
                     print(f"Could not find the IMDd ID with the title '{movie_title}'.")
                     return None
@@ -381,38 +381,42 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, max_re
             #print(f"Max retries reached. Could not fetch the plot for {movie_title}.")
             return None
 
-def load_cached_descriptions(descriptions_path):
+def load_cached_descriptions(descriptions_path, max_movie_id):
     """
-    Loads cached movie descriptions from a CSV file.
+    Loads movie descriptions from a CSV file and ensures all movie IDs from 1 to max_movie_id are present.
 
-    This function attempts to load movie descriptions from a cached CSV file.
-    If the file exists, it reads the descriptions into a pandas DataFrame.
-    If the file doesn't exist, it creates an empty DataFrame with the appropriate columns
-    and saves it to the specified path.
+    This function attempts to load movie descriptions from a specified CSV file into a pandas DataFrame.
+    If the file exists, it reads the descriptions into the DataFrame. If the file does not exist, it
+    initializes a DataFrame with all movie IDs from 1 to max_movie_id, with empty strings as placeholders
+    for descriptions. This ensures that every movie ID has a corresponding entry, even if the description
+    is initially missing.
 
     Parameters:
     - descriptions_path (str): The path to the descriptions CSV file.
+    - max_movie_id (int): The maximum movie ID to ensure all IDs from 1 to this number have entries.
 
     Returns:
-    pandas.DataFrame: A DataFrame containing cached movie descriptions.
-        - If the CSV file exists, it contains the loaded data.
-        - If the CSV file doesn't exist, it contains columns 'movieId' and 'description' with no data.
+    pandas.DataFrame: A DataFrame containing movie descriptions, with all movie IDs from 1 to max_movie_id
+    included. Descriptions are filled with empty strings where data is missing.
     """
-
-    # Check if the descriptions CSV file exists
     if os.path.exists(descriptions_path):
-        # If it exists, read the CSV file into a pandas DataFrame and return it
-        return pd.read_csv(descriptions_path)
+        cached_descriptions = pd.read_csv(descriptions_path)
+        # Ensure all movie IDs from 1 to max_movie_id are present
+        all_movie_ids = pd.DataFrame({'movieId': range(1, max_movie_id + 1)})
+        complete_cached_descriptions = pd.merge(all_movie_ids, cached_descriptions, on='movieId', how='left')
+        complete_cached_descriptions['description'].fillna("", inplace=True)
     else:
-        # If it doesn't exist, return an empty DataFrame with 'movieId' and 'description' columns
-        return pd.DataFrame(columns=['movieId', 'description'])
+        # Create a DataFrame with all movie IDs from 1 to max_movie_id
+        complete_cached_descriptions = pd.DataFrame({'movieId': range(1, max_movie_id + 1), 'description': [""] * max_movie_id})
+
+    return complete_cached_descriptions
     
 def save_cached_descriptions(cached_descriptions, descriptions_path):
     """
     Saves the cached movie descriptions to a CSV file.
 
     This function takes a DataFrame containing movie descriptions and saves it to a CSV file
-    located at the specified path. If the file does not exist, it is created automatically.
+    located at the specified path.
 
     Parameters:
     - cached_descriptions (pandas.DataFrame): A DataFrame containing movie descriptions with
@@ -424,13 +428,10 @@ def save_cached_descriptions(cached_descriptions, descriptions_path):
     - The index of the DataFrame is not saved to the CSV file, ensuring that only the data
       columns ('movieId' and 'description') are written.
     """
-
-    # Save the DataFrame to a CSV file
-    cached_descriptions.to_csv(descriptions_path, index=False)
+    cached_descriptions.to_csv(descriptions_path, index=False, encoding='utf-8')
 
 
-def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selected_chat_format, descriptions_path, max_retries, delay_between_attempts):
-
+def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_format, descriptions_path, url, headers, max_retries, delay_between_attempts):
     """
     Retrieves movie descriptions for a list of top N movies using their IMDb IDs.
 
@@ -443,11 +444,13 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
     - top_n_movies (list): A list of tuples, each containing a movie ID, movie title, and estimated rating.
     - combined_dataframe (pandas.DataFrame): A DataFrame containing movie information, including IMDb IDs.
     - model_name (str): The name of the language model to use for generating descriptions.
-    - selected_chat_format (str): The format string to structure the few-shot examples and movie title.
+    - chat_format (str): The format string to structure the few-shot examples and movie title.
+    - descriptions_path (str): The path to the descriptions CSV file.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
     - max_retries (int): The maximum number of retry attempts for fetching movie data.
     - delay_between_attempts (int): The delay in seconds between retry attempts.
-    - descriptions_path (str): The path to the descriptions CSV file.
-
+    
     Returns:
     - descriptions (dict): A dictionary mapping movie IDs to their descriptions.
 
@@ -464,7 +467,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
     descriptions = {}
 
     # Load cached descriptions from a CSV file
-    cached_descriptions = load_cached_descriptions(descriptions_path)
+    cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
 
     # Track the last time the message was printed
     last_print_time = time.time()
@@ -479,51 +482,51 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, selecte
             last_print_time = current_time
 
         # Check if we have a cached description for the current movie
-        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description']
-        if not cached_description.empty:
-            descriptions[movie_id] = cached_description.iloc[0]
+        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
+        if cached_description != "":
+            descriptions[movie_id] = cached_description
             continue
 
         imdb_id = combined_dataframe.loc[combined_dataframe['movieId'] == movie_id, 'imdbId'].values[0]
-        movie = get_movie_with_retries(imdb_id, movie_title, model_name, selected_chat_format, max_retries, delay_between_attempts)
+        movie = get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts)
         if movie and 'plot' in movie:
             description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
         else:
             # Could not find a description, as a last resort, generate a description using few shot prompting
-            description = generate_description_with_few_shot(movie_title, model_name, selected_chat_format)
+            description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
             # print(descriptions[movie_id])
 
         # Store the description in the dictionary
         descriptions[movie_id] = description
 
-        # Append the new description to the cached descriptions DataFrame
-        cached_descriptions = pd.concat([cached_descriptions, pd.DataFrame([{'movieId': movie_id, 'description': description}])], ignore_index=True)
+        # Replace the empty string descriptions with the new descriptions
+        cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
 
     # Saved the updated cache descriptions back to the CSV file    
     save_cached_descriptions(cached_descriptions, descriptions_path)
 
     return descriptions
 
-def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url="http://localhost:5001/v1/chat/completions"):
+def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers):
     """
-        Finds the top N most similar movies to the user's input from a list of movie descriptions using a Large Language Model (LLM).
+    Finds the top N most similar movies to the user's input from a list of movie descriptions using a Large Language Model (LLM).
 
-        This function leverages an LLM to evaluate the similarity between a user's preferences and a set of movie descriptions. It constructs a prompt for the LLM using few-shot examples to guide the model in generating a similarity score for each movie. The top N movies with the highest similarity scores are returned.
+    This function leverages an LLM to evaluate the similarity between a user's preferences and a set of movie descriptions. It constructs a prompt for the LLM using few-shot examples to guide the model in generating a similarity score for each movie. The top N movies with the highest similarity scores are returned.
 
-        Parameters:
-        - user_input (str): A string describing the user's movie preferences.
-        - movie_descriptions (dict): A dictionary mapping movie IDs to their descriptions. Each description provides a brief overview of the movie's content.
-        - id_to_title (dict): A dictionary mapping movie IDs to their titles. This is used to include the movie title in the prompt for the LLM.
-        - model_name (str): The name of the LLM to use for generating similarity scores. This should correspond to a model available at the specified API endpoint.
-        - chat_format (str): A format string used to structure the prompt for the LLM. It should include a placeholder for the prompt content.
-        - n (int): The number of top similar movies to return.
-        - url (str): The API endpoint URL to send the request to. Defaults to "http://localhost:5001/v1/chat/completions".
+    Parameters:
+    - user_input (str): A string describing the user's movie preferences.
+    - movie_descriptions (dict): A dictionary mapping movie IDs to their descriptions. Each description provides a brief overview of the movie's content.
+    - id_to_title (dict): A dictionary mapping movie IDs to their titles. This is used to include the movie title in the prompt for the LLM.
+    - model_name (str): The name of the LLM to use for generating similarity scores. This should correspond to a model available at the specified API endpoint.
+    - chat_format (str): A format string used to structure the prompt for the LLM. It should include a placeholder for the prompt content.
+    - n (int): The number of top similar movies to return.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
 
-        Returns:
-        - top_n_movies (list of tuples): A list of tuples containing the movie ID and similarity score of the top N most similar movies.
+    Returns:
+    - top_n_movies (list of tuples): A list of tuples containing the movie ID and similarity score of the top N most similar movies.
     """
 
-    headers = {"Content-Type": "application/json"}
     similarity_scores = []
 
     for movie_id, description in movie_descriptions.items():
@@ -562,28 +565,40 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         )
 
         full_prompt = few_shot_examples + "Now, respond to the following prompt:\n" + prompt_content
-        
+
         # Format the prompt using the provided chat format
         full_prompt = chat_format.format(prompt=full_prompt)
-        
-        # Add example input and output to guide the LLM
 
         payload = {
-            "model": model_name, # Use passed model name
+            "model": model_name,  # Use passed model name
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant whose job is to rate the similarity between user preferences and product descriptions. Always respond with a number between -1.0 and 1.0."},
-                {"role":"user", "content": full_prompt}
+                {"role": "user", "content": full_prompt}
             ],
             "max_tokens": 5,
-            "temperature": 0
+            "temperature": 0.7  # Temperature of 0.7 to encourage adaptability and prevent the LLM from repeating mistakes
         }
 
         response = requests.post(url, headers=headers, json=payload)
+
         if response.status_code == 200:
             content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
             # print(content)
-            similarity_score = float(content)
-            similarity_scores.append((movie_id, similarity_score))
+            try:
+                similarity_score = float(content)
+            except ValueError:
+                print(f"Could not convert similarity score to float for movie '{movie_title}': {content}")
+                
+                # Assign a similarity score of 0 if conversion fails 
+                similarity_score = 0.0
+
+        else: 
+            print(f"Request failed for movie '{movie_title}' with status code {response.status_code}")
+
+            # Assign a similarity score of 0 for failed requests
+            similarity_score = 0.0
+
+        similarity_scores.append((movie_id, similarity_score))
 
     # Sort the movies by similarity score in descending order and select the top N
     similarity_scores.sort(key=lambda x: x[1], reverse=True)
@@ -591,13 +606,17 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
  
     return top_n_movies
 
-def ia_test_function(movie_title, combined_dataframe):
+def ia_test_function(movie_title, combined_dataframe, model_name, chat_format, url, headers):
     """
     Tests the retrieval of movie information from IMDb for a given movie title.
 
     Parameters:
     - movie_title (str): The title of the movie to retrieve information for.
     - combined_dataframe (DataFrame): A DataFrame containing movie information, including IMDb IDs.
+    - model_name (str): The name of the model to use for generating the similarity score.
+    - chat_format (str): A format string to structure the user input.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
 
     Returns:
     - movie_description (str): The plot description of the movie, or a default message if not available.
@@ -606,8 +625,8 @@ def ia_test_function(movie_title, combined_dataframe):
     imdb_id = combined_dataframe.loc[combined_dataframe['title'] == movie_title, 'imdbId'].values[0]
     print(f"IMDb ID for '{movie_title}' is {imdb_id}")
 
-    # Get the movie object with title, plot, and reviews
-    movie = get_movie_with_retries(imdb_id, movie_title)
+    # Get the movie object with title and plot
+    movie = get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers)
 
     # Access the plot (description)
     movie_description = None
@@ -618,10 +637,15 @@ def ia_test_function(movie_title, combined_dataframe):
         else:
             movie_description = movie['plot']
     else:
-        movie_description = "No plot information available."
+        # Set empty string because movie description could not be found
+        movie_description = ""
 
     # Add the description to the DataFrame
-    combined_dataframe.loc[combined_dataframe['title'] == movie_title, 'description'] = movie_description
+    # combined_dataframe.loc[combined_dataframe['title'] == movie_title, 'description'] = movie_description
+
+    '''
+
+    # This code has been temporarily disabled until review retrieving functionality has been reimplemented
 
     # Access reviews
     if movie:
@@ -634,10 +658,11 @@ def ia_test_function(movie_title, combined_dataframe):
             print(f"Content: {review['content']}\n")
     else:
         print("No reviews found for this movie.")
+    '''
 
     return movie_description
 
-def test_api_call(model_name, user_message, chat_format, url="http://localhost:5001/v1/chat/completions"):
+def test_api_call(model_name, user_message, chat_format, url, headers):
     """
     Sends a POST request to a specified LLM API endpoint to generate a response based on a user message.
 
@@ -645,16 +670,12 @@ def test_api_call(model_name, user_message, chat_format, url="http://localhost:5
     - model_name (str): The name of the model to use for generating the response.
     - user_message (str): The message or prompt from the user that needs a response.
     - chat_format (str): A format string to structure the user message. It should contain a placeholder for the user message.
-    - url (str): The API endpoint URL to send the request to. Defaults to "http://localhost:5001/v1/chat/completions".
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
 
     Returns:
     - str: The generated response from the LLM if successful, otherwise None.
     """
-
-    # Define the headers, for now omitting the API key
-    headers = {
-        "Content-Type": "application/json"
-    }
 
     # Format user message using provided chat format
     user_prompt = chat_format.format(user_message=user_message)
@@ -691,8 +712,286 @@ def test_api_call(model_name, user_message, chat_format, url="http://localhost:5
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
+    
+def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format, url, headers):
+    """
+    Generate a user preference summary using few-shot prompting with a language model.
+
+    Parameters:
+    - rated_movies (list of tuples): Each tuple contains (movie_id, movie_title, description, rating).
+    - model_name (str): The name of the model to use for generating the description.
+    - chat_format (str): The format string to structure the few-shot examples and movie title.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
+
+    Returns:
+    - str: The generated user preference summary.
+    """
+
+    # Few-shot examples with real movies and aggregated preferences
+    few_shot_examples = (
+        "Example 1:\n"
+        "Movies:\n"
+        "1. Movie title: The Shawshank Redemption\n"
+        "   Description: Two imprisoned men bond over a number of years, finding solace and eventual redemption through acts of common decency.\n"
+        "   User rating: 5.0\n"
+        "2. Movie title: The Godfather\n"
+        "   Description: The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.\n"
+        "   User rating: 4.5\n"
+        "User preferences: I enjoy movies with deep character development, themes of redemption, and complex family dynamics.\n\n"
+        "Example 2:\n"
+        "Movies:\n"
+        "1. Movie title: The Matrix\n"
+        "   Description: A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.\n"
+        "   User rating: 4.5\n"
+        "2. Movie title: Inception\n"
+        "   Description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a CEO.\n"
+        "   User rating: 4.0\n"
+        "User preferences: I love movies with mind-bending plots, action-packed sequences, and philosophical themes.\n\n"
+    )
+
+    # Combine rated movie descriptions with titles and ratings
+    combined_descriptions = "\n".join(
+        f"Movie title: {title}\nDescription: {description}\nUser rating: {rating}"
+        for _, title, description, rating in rated_movies
+    )
+
+    # Format the prompt using the provided chat format
+    prompt = chat_format.format(prompt=few_shot_examples + "Now, based on the following movie titles, descriptions and ratings, generate a comprehensive user preference summary:\n" + combined_descriptions)
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant that generates comprehensive user preference summaries based on multiple movies that a user has rated."},
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 150,
+        "temperature": 0.7
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        return response.json().get("choices", [])[0].get("message", {}).get("content", "").strip()
+    else:
+        # Return empty string if preferences could not be generated so it can be regenerated later
+        return ""
+
+def load_user_preferences(preferences_path, max_user_id):
+    """
+    Loads user preferences from a CSV file and ensures all user IDs from 1 to max_user_id are present.
+
+    This function attempts to load user preferences from a specified CSV file into a pandas DataFrame.
+    If the file exists, it reads the preferences into the DataFrame. If the file does not exist, it
+    initializes a DataFrame with all user IDs from 1 to max_user_id, with empty strings as placeholders
+    for preferences. This ensures that every user ID has a corresponding entry, even if the preferences
+    are initially missing.
+
+    Parameters:
+    - preferences_path (str): The path to the preferences CSV file.
+    - max_user_id (int): The maximum user ID to ensure all IDs from 1 to this number have entries.
+
+    Returns:
+    pandas.DataFrame: A DataFrame containing user preferences, with all user IDs from 1 to max_user_id
+    included. Preferences are filled with empty strings where data is missing.
+    """
+    if os.path.exists(preferences_path):
+        preferences_df = pd.read_csv(preferences_path)
+        # Ensure all user IDs from 1 to max_user_id are present
+        all_user_ids = pd.DataFrame({'userId': range(1, max_user_id + 1)})
+        complete_preferences_df = pd.merge(all_user_ids, preferences_df, on='userId', how='left')
+        complete_preferences_df['preferences'].fillna("", inplace=True)
+    else:
+        # Create a DataFrame with all user IDs from 1 to max_user_id
+        complete_preferences_df = pd.DataFrame({'userId': range(1, max_user_id + 1), 'preferences': [""] * max_user_id})
+
+    return complete_preferences_df
+
+def save_user_preferences(user_id, user_preferences, preferences_path):
+    """
+    Save user preferences to a CSV file, ensuring each entry is on the line corresponding to userId.
+
+    Parameters:
+    - user_id (int): The ID of the user whose preferences are being saved.
+    - user_preferences (str): The preferences of the user.
+    - preferences_path (str): The path to the CSV file where preferences will be saved.
+
+    Returns:
+    - None
+    """
+    # Load existing preferences or create a new DataFrame
+    preferences_df = load_user_preferences(preferences_path, user_id)
+
+    # Update the preferences for the current user
+    preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'] = user_preferences
+
+    # Save the updated DataFrame back to the CSV file
+    preferences_df.to_csv(preferences_path, index=False, encoding='utf-8')
+
+def retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, url, headers, start_movie_id=1, max_retries=5, delay_between_attempts=1):
+    """
+    Retrieve descriptions for all movies starting from a specific movie ID.
+
+    This function iterates over all movies in the combined DataFrame, starting from the specified movie ID.
+    It checks if a description is already cached; if not, it attempts to retrieve the description from IMDb.
+    If retrieval fails, it generates a description using a language model. The descriptions are saved to a CSV file
+    every 100 movies to prevent data loss.
+
+    Parameters:
+    - combined_dataframe (pandas.DataFrame): DataFrame containing movie information, including IMDb IDs.
+    - model_name (str): The name of the language model to use for generating descriptions.
+    - chat_format (str): The format string to structure the few-shot examples and movie title.
+    - descriptions_path (str): The path to the descriptions CSV file.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
+    - start_movie_id (int): The movie ID to start processing from. Defaults to 1.
+    - max_retries (int): The maximum number of retry attempts for fetching movie data. Defaults to 5.
+    - delay_between_attempts (int): The delay in seconds between retry attempts. Defaults to 1.
+
+    Returns:
+    - None
+    """
+    # Load existing descriptions from the CSV file, ensuring all movie IDs are present
+    cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
+    
+    # Iterate over each row in the combined DataFrame
+    for index, row in combined_dataframe.iterrows():
+        
+        # Extract the movie ID from the current row
+        movie_id = row['movieId']
+
+        # Skip movies with IDs less than the starting movie ID
+        if movie_id < start_movie_id:
+            continue
+
+        # Check if the description for this movie is already cached
+        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
+        if cached_description != "":
+            continue
+
+        # Extract the movie title and IMDb ID from the current row
+        movie_title = row['title']
+        imdb_id = row['imdbId']
+
+        # Attempt to retrieve the movie data, including the plot, from IMDb
+        movie = get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts)
+        
+        # If the movie data is retrieved and contains a plot, use it as the description
+        if movie and 'plot' in movie:
+            description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
+        else:
+            # If no plot is available, generate a description using a language model
+            description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+
+        # Update the cached descriptions with the new description for the current movie
+        cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+
+        # Save the cached descriptions to the CSV file every 100 movies
+        if (index + 1) % 100 == 0:
+            save_cached_descriptions(cached_descriptions, descriptions_path)
+
+    # Always save the cached descriptions at the end
+    save_cached_descriptions(cached_descriptions, descriptions_path)
+
+    # Return the updated cached descriptions
+    return cached_descriptions
+
+def generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_name, chat_format, preferences_path, url, headers, start_user_id=1):
+    """
+    Generate preferences for all users starting from a specific user ID.
+
+    This function iterates over all users in the ratings DataFrame, starting from the specified user ID.
+    It generates user preferences based on the top 10 rated movies for each user. The preferences are saved
+    to a CSV file every 100 users to prevent data loss.
+
+    Parameters:
+    - ratings_dataframe (pandas.DataFrame): DataFrame containing all movie ratings made by users.
+    - combined_dataframe (pandas.DataFrame): DataFrame containing movie information, including IMDb IDs and descriptions.
+    - model_name (str): The name of the language model to use for generating preferences.
+    - chat_format (str): The format string to structure the few-shot examples and movie title.
+    - preferences_path (str): The path to the preferences CSV file.
+    - url (str): The API endpoint URL to send the request to.
+    - headers (dict): The headers to include in the API request.
+    - start_user_id (int): The user ID to start processing from. Defaults to 1.
+
+    Returns:
+    - None
+    """
+    # Load existing user preferences from the CSV file, ensuring all user IDs are present
+    preferences_df = load_user_preferences(preferences_path, ratings_dataframe['userId'].max())
+
+    # Iterate over each user ID starting from the specified start_user_id
+    for user_id in range(start_user_id, ratings_dataframe['userId'].max() + 1):
+        # Check if preferences for this user are already cached
+        if preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0] != "":
+            continue
+
+        # Get all ratings for the current user
+        user_ratings = ratings_dataframe[ratings_dataframe['userId'] == user_id]
+        
+        # Select the top 10 rated movies for the user
+        top_rated_movies = user_ratings.nlargest(10, 'rating')
+        
+        # Prepare a list of tuples containing movie information for the top-rated movies
+        rated_movies = [
+            (row['movieId'], combined_dataframe.loc[combined_dataframe['movieId'] == row['movieId'], 'title'].values[0], combined_dataframe.loc[combined_dataframe['movieId'] == row['movieId'], 'description'].values[0], row['rating'])
+            for index, row in top_rated_movies.iterrows()
+        ]
+
+        # Generate user preferences based on the top-rated movies with descriptions
+        user_preferences = generate_preferences_from_rated_movies(rated_movies, model_name, chat_format, url, headers)
+        
+        # Update the preferences DataFrame with the new preferences for the current user
+        preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'] = user_preferences
+
+        # Save the preferences to the CSV file every 100 users
+        if user_id % 100 == 0:
+            save_user_preferences(user_id, user_preferences, preferences_path)
+
+    # Always save the preferences at the end
+    save_user_preferences(user_id, user_preferences, preferences_path)
 
 def main():
+
+    parser = argparse.ArgumentParser(description='LLM Recommendation System')
+    parser.add_argument('--mode', type=str, default='development', choices=['development', 'production', 'generate-data'],
+                        help='Running mode: development, production, or generate-data')
+    parser.add_argument('--start-movie-id', type=int, default=1, help='Starting movie ID for data generation')
+    parser.add_argument('--start-user-id', type=int, default=1, help='Starting user ID for data generation')
+    args = parser.parse_args()
+
+    if args.mode == 'production':
+
+        # Use OpenAPI 
+        api_url = "https://api.openai.com/v1/chat/completions"
+        api_key = os.getenv("OPENAI_API_KEY")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+
+        openai_models = {
+            "gpt-4o": "{user_message}",
+            "gpt-4o-mini": "{user_message}"
+        }
+
+        # Select OpenAI model here
+        model_name = list(openai_models.keys())[1]
+
+        # Get the model's corresponding expected chat format
+        chat_format = openai_models[model_name]
+    else: 
+        # Use Kobold's local OpenAI compatible API 
+        api_url = "http://localhost:5001/v1/chat/completions"
+        headers = { "Content-Type": "application/json" }
+        kobold_models = {
+            "Phi-3-mini-4k-instruct-q4.gguf": "<|user|>\n{prompt} <|end|>\n<|assistant|>"
+        }
+
+        # Get the desired locally hosted model
+        model_name = list(kobold_models.keys())[0] 
+
+        # Get the corresponding chat format
+        chat_format = kobold_models[model_name]
 
     # Explain the differences between the datasets
     print("Please choose a dataset to use for the recommendation system:")
@@ -728,6 +1027,9 @@ def main():
     # Contains movieId, description. This allows for quicker description retrieval and will be filled out as we retrieve descriptions from IMDb or generate them.
     descriptions_path = os.path.join(base_path, 'descriptions.csv')
 
+    # Define the path to the preferences CSV file
+    preferences_path = os.path.join(base_path, 'preferences.csv')
+
     # Load the ratings dataset into a pandas dataframe
     ratings_dataframe = pd.read_csv(ratings_path)
 
@@ -748,21 +1050,33 @@ def main():
     # Create IMDB id to MovieLens ID mapping and vice versa
     movielens_to_imdb, imdb_to_movielens = create_id_mappings(links_dataframe)
 
-    # Number of movies the user wants to rate
-    n = 5  # You can change this to any number you prefer
+    
+    # Check for generate-data mode
+    if args.mode == 'generate-data':
+        # Retrieve all descriptions and get the updated DataFrame
+        cached_descriptions = retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, args.start_movie_id)
+        
+        # Merge descriptions into combined_dataframe
+        combined_dataframe = combined_dataframe.merge(cached_descriptions, on='movieId', how='left')
+        
+        
+        # Update the call to generate_all_user_preferences to use the updated combined_dataframe
+        generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_name, chat_format, preferences_path, api_url, headers, args.start_user_id)
+        return
+
+    while True:
+        try:
+            n = int(input("How many movies would you like to rate? (Minimum 1): "))
+            if n >= 1:
+                break
+            else:
+                print("Please enter a number greater than or equal to 1.")
+        except ValueError:
+            print("Invalid input. Please enter a numeric value.")
+
 
     # Assign a new user ID
     new_user_id = ratings_dataframe['userId'].max() + 1
-
-    # Initialize data for connecting to LLM API
-
-    # Define chat format for Phi-3-mini-4k-instruct-gguf
-    phi_chat_format = "<|user|>\n{prompt} <|end|>\n<|assistant|>"
-
-    # Modify depending on the model``
-    selected_chat_format = phi_chat_format
-
-    model_name = "Phi-3-mini-4k-instruct-q4.gguf"
 
     # Step 1: Ask user for 5 movies they love
     new_ratings = []
@@ -773,7 +1087,7 @@ def main():
         movie_title = input(f"Movie {len(new_ratings) + 1} title: ")
         
         # Get the IMDbId
-        imdb_id = get_imdb_id_by_title(movie_title, model_name, selected_chat_format)
+        imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers)
         if imdb_id:
 
             # Convert the found IMDbId to an integer
@@ -874,24 +1188,45 @@ def main():
     ia = Cinemagoer()
 
     movie_title = "Toy Story (1995)"
-    movie_description = ia_test_function(movie_title, combined_dataframe)
+    movie_description = ia_test_function(movie_title, combined_dataframe, model_name, chat_format, api_url, headers)
     '''
 
+    # Code to test the API
     '''
-    # Put model name you want to here for the test API call
-    test_model_name = "Phi-3-mini-4k-instruct-q4.gguf"
-
-    # Modify to use existing chat model formats when switching between models as need
-    selected_test_chat_format = phi_chat_format
-
     # Test message for calling the API
     test_message = "Say this is a test."
 
-    test_api_call(test_model_name, test_message, selected_test_chat_format)
+    test_api_call(model_name, test_message, chat_format, api_url, headers)
     '''
 
-    # Define user message
-    user_input = input("Please describe what kind of movie experiences you are looking for (1 or 2 sentences):\n")
+    # After collecting movie ratings, ask the user if they want to describe their preferences.
+    describe_preferences = input("Would you like to describe your movie preferences? (yes/no): ").strip().lower()
+    
+    if describe_preferences == "no":
+
+        # Prepare data for fetching descriptions
+        rated_movies = [(rating['movieId'], id_to_title[rating['movieId']], rating['rating']) for rating in new_ratings]
+
+        # Fetch movie descriptions for all newly rated movies
+        movie_descriptions = get_movie_descriptions(rated_movies, combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
+
+        # Prepare data for preference generation
+        rated_movies_with_descriptions = [
+            (movie_id, title, movie_descriptions[movie_id], rating) for movie_id, title, rating in rated_movies
+        ]
+
+        # Generate preferences using the rated movies
+        user_preferences = generate_preferences_from_rated_movies(rated_movies_with_descriptions, model_name, chat_format, api_url, headers)
+    else:
+        # Get user input for preferences
+        user_preferences = input("Please describe what kind of movie experiences you are looking for (1 or 2 sentences):\n")
+
+    # Output the generated or user-provided preferences
+    print("User Preferences:")
+    print(user_preferences)
+
+    # Save the user preferences to a CSV file
+    save_user_preferences(new_user_id, user_preferences, preferences_path)
 
     # Get a list of all movie IDs
     all_movie_ids = movies_dataframe['movieId'].unique()
@@ -916,6 +1251,7 @@ def main():
     else:
         n = n_times_10
 
+    # Get top n * 10 with traditional algorithm
     top_n_for_user = get_top_n_recommendations(algo_for_user, specific_user_id, all_movie_ids, ratings_dataframe, id_to_title, n_times_10)
 
     print("\n")
@@ -927,17 +1263,16 @@ def main():
 
     print("\n")
 
-
     print("Now the LLM will personalize the recommendations to your tastes, please wait until processing has completed.\n")
 
     # Get movie descriptions
-    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, selected_chat_format, descriptions_path, max_retries=5, delay_between_attempts=1)
+    movie_descriptions = get_movie_descriptions(top_n_for_user, combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
 
     print("\n")
 
     print(f"Top {n} recommendations for User {specific_user_id} according to Traditional Algorithm Enhanced by LLM:")
     # Print the best movie recommendations according to the traditional algorithm enhanced by the LLM
-    top_n_similar_movies = find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, selected_chat_format, n)
+    top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers)
     for movie_id, score in top_n_similar_movies:
         print(f"Movie Title: {id_to_title[movie_id]}, Similarity Score (Matches your interests): {score}")
     
