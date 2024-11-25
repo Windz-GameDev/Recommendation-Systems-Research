@@ -1,4 +1,4 @@
-# LLM-Enhanced Recommendation System Framework for GRE Research Project
+# LLM-Enhanced Traditional Algorithms Recommendation System Framework for GRE Research Project
 
 ## Introduction
 
