@@ -71,7 +71,7 @@ The recommendation system can be run in three different modes, each serving a sp
 
 2. **Production Mode**:
 
-   - **Purpose**: Utilizes OpenAI's GPT-4o mini model for generating descriptions and similarity scores, suitable for production environments.
+   - **Purpose**: Utilizes OpenAI's GPT-4o-mini model for generating descriptions and similarity scores, suitable for production environments.
    - **Setup**: Requires an OpenAI API key, which should be added to a `.env` file in the project root directory.
    - **Command**: Run the system using:
      ```bash python
