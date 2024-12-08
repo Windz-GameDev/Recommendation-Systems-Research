@@ -244,12 +244,12 @@ Even Chance (1998), The Count of Monte Cristo (1998).
 
 **Favorite Movies:**
 
-Kill Bill (2003) - 5.0
-Crossroads (1986) - 5.0
-Conan The Barbarian (1982) - 5.0
-Training Day (2001) - 5.0
-Outsiders (1983) - 5.0
-Full Metal Jacket (1987) - 5.0
+1. Kill Bill (2003) - 5.0
+2. Crossroads (1986) - 5.0
+3. Conan The Barbarian (1982) - 5.0
+4. Training Day (2001) - 5.0
+5. Outsiders (1983) - 5.0
+6. Full Metal Jacket (1987) - 5.0
 
 **User Preferences:**
 
