@@ -146,9 +146,9 @@ python llm_recommendation_system.py
 
 **Favorite Movies:**
 
-   The Lord of the Rings: The Two Towers - 5
-   Rogue One: A Star Wars Story - 5
-   WALL·E - 5
+1. The Lord of the Rings: The Two Towers - 5
+2. Rogue One: A Star Wars Story - 5
+3. WALL·E - 5
 
 **User Preferences:**
 
@@ -174,18 +174,16 @@ Infinity War - Part II (2019), Avengers: Infinity War - Part I
 
 **Favorite Movies:**
 
-Tropic Thunder (2008) - 5
-Coming to America (1988) - 4.5
-Coming 2 America (2021) - 5
-Beverly Hills Cop: Axel F (2024) - 4.5
-Beetlejuice (1988) - 4
-Beetlejuice Beetlejuice (2024) - 4.5
-Vegas Vacation (1997) - 4
-National Lampoon's Christmas Vacation (1989) - 5
-Grown Ups (2010) - 4.5
-Grown Ups 2 (2013) - 4.5
-Anchorman: The Legend of Ron Burgundy (2004) - 4.5
-Anchorman 2: The Legend Continues (2013) - 5
+1. Tropic Thunder (2008) - 5
+2. Coming to America (1988) - 4.5
+3. Coming 2 America (2021) - 5
+4. Beetlejuice (1988) - 4
+5. Vegas Vacation (1997) - 4
+6. National Lampoon's Christmas Vacation (1989) - 5
+7. Grown Ups (2010) - 4.5
+8. Grown Ups 2 (2013) - 4.5
+9. Anchorman: The Legend of Ron Burgundy (2004) - 4.5
+10. Anchorman 2: The Legend Continues (2013) - 5
 
 **User Preferences:**
 
@@ -216,10 +214,10 @@ Doctor Watson, Bill Burr: You People Are All the Same (2012).
 
 **Favorite Movies:**
 
-Top Gun Maverick - 4.5 
-The Final Countdown (1980) - 5
-Star Trek Into Darkness - 5
-My Cousin Vinny - 5
+1. Top Gun Maverick - 4.5 
+2. The Final Countdown (1980) - 5
+3. Star Trek Into Darkness - 5
+4. My Cousin Vinny - 5
 
 **User Preferences:**
 
