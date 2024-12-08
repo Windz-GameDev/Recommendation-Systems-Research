@@ -142,88 +142,105 @@ python llm_recommendation_system.py
 
 ## Example Inputs and Outputs
 
-User 1 [Preferred LLM-enhanced Anonymously]: 
+### User 1 [Preferred LLM-enhanced Anonymously]:
 
-Favorite Movies:
-The Lord of the Rings: The Two Towers - 5
-Rogue One: A Star Wars Story - 5
-WALL-E - 5
+**Favorite Movies:**
 
-User Preferences:
+The Lord of the Rings: The Two Towers - 5  
+Rogue One: A Star Wars Story - 5  
+WALL-E - 5  
+
+**User Preferences:**
+
 "I am drawn to science fiction and fantasy stories that are well written."
 
-Top 10 recommendations according to SVD:
-Planet Earth II (2016), Planet Earth (2006), Band of Brothers (2001), 
-The Civil War (1990), The Blue Planet (2001), Cosmos, 
-Cosmos: A Spacetime Odyssey, Blue Planet II (2017), Twelve Angry Men (1954)
-The Shawshank Redemption (1994).
+**Top 10 recommendations according to SVD:**
 
-Top 10 recommendations according to our LLM-enhanced:
-Dune (2021), Inception (2010), Cosmos: A Spacetime Odyssey
-Attack On Titan (2013), Black Mirror, Firefly (2002)
-Avengers: Infinity War - Part II (2019), Avengers: Infinity War - Part I (2018)
-Over the Garden Wall (2013), Infinity Train (2016).
+Planet Earth II (2016), Planet Earth (2006), Band of Brothers
+(2001), The Civil War (1990), The Blue Planet (2001), Cosmos,
+Cosmos: A Spacetime Odyssey, Blue Planet II (2017), Twelve
+Angry Men (1954), The Shawshank Redemption (1994).
 
-User 2 [Preferred LLM-enhanced Anonymously]
+**Top 10 recommendations according to our LLM-enhanced:**
 
-Favorite Movies: 
+Dune (2021), Inception (2010), Cosmos: A Spacetime Odyssey,
+Attack On Titan (2013), Black Mirror, Firefly (2002), Avengers:
+Infinity War - Part II (2019), Avengers: Infinity War - Part I
+(2018), Over the Garden Wall (2013), Infinity Train (2016).
 
-Tropic Thunder - 5
-Coming to America - 4.5
-Coming to America 2 - 5
-Beverly Hills Cop Axle F - 4.5
-Beetlejuice - 4
-Beetlejuice Beetlejuice - 4.5
-Vegas Vacation - 4
-Christmas Vacation - 5
-Grown Ups - 4.5
-Grown Ups 2 - 4.5
-Anchorman - 4.5
-Anchorman - 2            5
+---
 
-User Preferences:
+### User 2 [Preferred LLM-enhanced Anonymously]:
 
-"Types of movies, action/adventure, comedy, romcom, suspense and thrillers, documentaries."
+**Favorite Movies:**
 
-Top 10 recommendations according to SVD:
+Tropic Thunder - 5  
+Coming to America - 4.5  
+Coming to America 2 - 5  
+Beverly Hills Cop Axel F - 4.5  
+Beetlejuice - 4  
+Beetlejuice Beetlejuice - 4.5  
+Vegas Vacation - 4  
+Christmas Vacation - 5  
+Grown Ups - 4.5  
+Grown Ups 2 - 4.5  
+Anchorman - 4.5  
+Anchorman 2 - 5  
 
-The Shawshank Redemption (1994), The Count of Monte Cristo (1998), Alive Inside (2014)
-Alone in the Wilderness Part II (2011), The Adventures of Sherlock Holmes and Doctor Watson: The Hunt for the Tiger (1980)
-Three Men and a Leg (1997), Sherlock: The Final Problem (2017), Attack On Titan (2013)
-Connections (1978), Saturday Night Live: The Best of Will Ferrell (2002)
+**User Preferences:**
 
-Top 10 recommendations according to our LLM-enhanced:
+"Types of movies: action/adventure, comedy, romcom, suspense and thrillers, documentaries."
 
-The Hangover (2009), Raiders of the Lost Ark (Indiana Jones and the Raiders of the Lost Ark) (1981)
-Saturday Night Live: The Best of Will Ferrell (2002), There's Something About Mary (1998)
-Deadpool (2016), Three Men and a Leg (1997), The Mole (2020), 3 Idiots (2009)
-The Adventures of Sherlock Holmes and Doctor Watson, Bill Burr: You People Are All the Same (2012)
+**Top 10 recommendations according to SVD:**
 
-User 3 [Preferred SVD Anonymously]
+The Shawshank Redemption (1994), The Count of Monte Cristo
+(1998), Alive Inside (2014), Alone in the Wilderness Part II
+(2011), The Adventures of Sherlock Holmes and Doctor Watson:
+The Hunt for the Tiger (1980), Three Men and a Leg (1997),
+Sherlock: The Final Problem (2017), Attack On Titan (2013),
+Connections (1978), Saturday Night Live: The Best of Will
+Ferrell (2002).
 
-Favorite Movies:
+**Top 10 recommendations according to our LLM-enhanced:**
 
-Top Gun Maverick - 4.5
-The Final Countdown - 5
-Star Trek Into Darkness - 5
-My Cousin Vinny - 5
+The Hangover (2009), Raiders of the Lost Ark (Indiana Jones and
+the Raiders of the Lost Ark) (1981), Saturday Night Live: The
+Best of Will Ferrell (2002), There's Something About Mary
+(1998), Deadpool (2016), Three Men and a Leg (1997), The Mole
+(2020), 3 Idiots (2009), The Adventures of Sherlock Holmes and
+Doctor Watson, Bill Burr: You People Are All the Same (2012).
 
-User Preferences:
+---
 
-"I like movies with good visuals. I love airplanes and that factors into my appreciation for movies like ""Top Gun Maverick"" or ""The Final Countdown"" with realistic flying and film of actual aircraft in flight - not fake or CGI. I like movies with science fiction aspects, I believe there are other worlds and movies like ""Star Trek Into Darkness"" spur my imagination into what may exist. I appreciate movies like ""My Cousin Vinny"" because I think the cast, humor, and delivery are all outstanding. I appreciate movies with great acting and writing."
+### User 3 [Preferred SVD Anonymously]:
 
-Top 10 recommendations according to SVD:
+**Favorite Movies:**
 
-The Civil War (1990), Band of Brothers (2001), The Work of Director Spike Jonze (2003)
-Connections (1978), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984)
-Letter from Siberia (1957), Emilie Muller (1994), The Shawshank Redemption (1994)
-Baseball (1994), Best Boy (1979)
+Top Gun Maverick - 4.5  
+The Final Countdown - 5  
+Star Trek Into Darkness - 5  
+My Cousin Vinny - 5  
 
-Top 10 recommendations according to our LLM-enhanced:
+**User Preferences:**
 
-Firefly (2002), Wings of Hope (Julianes Sturz in den Dschungel) (2000), Cosmos: A Spacetime Odyssey, Blue Planet II (2017)
-Cosmos, Good Will Hunting (1997), Future by Design (2006)
-His Last Vow, Hornblower: The Even Chance (1998), The Count of Monte Cristo (1998)
+"I like movies with good visuals. I love airplanes and that factors into my appreciation for movies like 'Top Gun Maverick' or 'The Final Countdown' with realistic flying and film of actual aircraft in flight—not fake or CGI. I like movies with science fiction aspects, I believe there are other worlds and movies like 'Star Trek Into Darkness' spur my imagination into what may exist. I appreciate movies like 'My Cousin Vinny' because I think the cast, humor, and delivery are all outstanding. I appreciate movies with great acting and writing."
+
+**Top 10 recommendations according to SVD:**
+
+The Civil War (1990), Band of Brothers (2001), The Work of
+Director Spike Jonze (2003), Connections (1978), Urusei Yatsura
+Movie 2: Beautiful Dreamer (1984), Letter from Siberia (1957),
+Emilie Muller (1994), The Shawshank Redemption (1994), Baseball
+(1994), Best Boy (1979).
+
+**Top 10 recommendations according to our LLM-enhanced:**
+
+Firefly (2002), Wings of Hope (2000), Cosmos: A Spacetime
+Odyssey, Blue Planet II (2017), Cosmos, Good Will Hunting
+(1997), Future by Design (2006), His Last Vow, Hornblower: The
+Even Chance (1998), The Count of Monte Cristo (1998).
+
+---
 
 ## Contributing
 
