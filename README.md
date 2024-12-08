@@ -140,6 +140,84 @@ python llm_recommendation_system.py
 
 7. Follow the prompts to provide your movie preferences and receive personalized recommendations.
 
+## Example Inputs and Outputs
+
+User 1 [Preferred LLM-enhanced Anonymously]: 
+
+Favorite Movies:
+The Lord of the Rings: The Two Towers - 5
+Rogue One: A Star Wars Story - 5
+WALL-E - 5
+
+User Preferences:
+"I am drawn to science fiction and fantasy stories that are well written."
+
+Top 10 recommendations according to SVD:
+Planet Earth II (2016), Planet Earth (2006), Band of Brothers (2001), 
+The Civil War (1990), The Blue Planet (2001), Cosmos, 
+Cosmos: A Spacetime Odyssey, Blue Planet II (2017), Twelve Angry Men (1954)
+The Shawshank Redemption (1994).
+
+Top 10 recommendations according to our LLM-enhanced:
+Dune (2021), Inception (2010), Cosmos: A Spacetime Odyssey
+Attack On Titan (2013), Black Mirror, Firefly (2002)
+Avengers: Infinity War - Part II (2019), Avengers: Infinity War - Part I (2018)
+Over the Garden Wall (2013), Infinity Train (2016).
+
+User 2 [Preferred LLM-enhanced Anonymously]
+
+Favorite Movies: 
+
+Tropic Thunder - 5
+Coming to America - 4.5
+Coming to America 2 - 5
+Beverly Hills Cop Axle F - 4.5
+Beetlejuice - 4
+Beetlejuice Beetlejuice - 4.5
+Vegas Vacation - 4
+Christmas Vacation - 5
+Grown Ups - 4.5
+Grown Ups 2 - 4.5
+Anchorman - 4.5
+Anchorman - 2            5
+
+User Preferences:
+"Types of movies, action/adventure, comedy, romcom, suspense and thrillers, documentaries."
+
+Top 10 recommendations according to SVD:
+The Shawshank Redemption (1994), The Count of Monte Cristo (1998), Alive Inside (2014)
+Alone in the Wilderness Part II (2011), The Adventures of Sherlock Holmes and Doctor Watson: The Hunt for the Tiger (1980)
+Three Men and a Leg (1997), Sherlock: The Final Problem (2017), Attack On Titan (2013)
+Connections (1978), Saturday Night Live: The Best of Will Ferrell (2002)
+
+Top 10 recommendations according to our LLM-enhanced:
+The Hangover (2009), Raiders of the Lost Ark (Indiana Jones and the Raiders of the Lost Ark) (1981)
+Saturday Night Live: The Best of Will Ferrell (2002), There's Something About Mary (1998)
+Deadpool (2016), Three Men and a Leg (1997), The Mole (2020), 3 Idiots (2009)
+The Adventures of Sherlock Holmes and Doctor Watson, Bill Burr: You People Are All the Same (2012)
+
+User 3 [Preferred SVD Anonymously]
+
+Favorite Movies:
+Top Gun Maverick - 4.5
+The Final Countdown - 5
+Star Trek Into Darkness - 5
+My Cousin Vinny - 5
+
+User Preferences:
+"I like movies with good visuals. I love airplanes and that factors into my appreciation for movies like ""Top Gun Maverick"" or ""The Final Countdown"" with realistic flying and film of actual aircraft in flight - not fake or CGI. I like movies with science fiction aspects, I believe there are other worlds and movies like ""Star Trek Into Darkness"" spur my imagination into what may exist. I appreciate movies like ""My Cousin Vinny"" because I think the cast, humor, and delivery are all outstanding. I appreciate movies with great acting and writing."
+
+Top 10 recommendations according to SVD:
+The Civil War (1990), Band of Brothers (2001), The Work of Director Spike Jonze (2003)
+Connections (1978), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984)
+Letter from Siberia (1957), Emilie Muller (1994), The Shawshank Redemption (1994)
+Baseball (1994), Best Boy (1979)
+
+Top 10 recommendations according to our LLM-enhanced:
+Firefly (2002), Wings of Hope (Julianes Sturz in den Dschungel) (2000), Cosmos: A Spacetime Odyssey, Blue Planet II (2017)
+Cosmos, Good Will Hunting (1997), Future by Design (2006)
+His Last Vow, Hornblower: The Even Chance (1998), The Count of Monte Cristo (1998)
+
 ## Contributing
 
 We welcome contributions from the open-source community to make this project even better. If you have any ideas, suggestions, or bug reports, please open an issue or submit a pull request on our GitHub repository.
