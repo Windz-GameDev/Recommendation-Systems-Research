@@ -266,8 +266,8 @@ Cosmos, Near Death (1989)
 
 **Top 10 recommendations according to our LLM-enhanced:**
 
-Death Note: Desu nôto (2006–2007), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984)
-Sherlock Holmes and Dr. Watson: Acquaintance (1979), Legend of the Galactic Heroes: Overture to a New War (1993)
+Death Note: Desu nôto (2006–2007), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984),
+Sherlock Holmes and Dr. Watson: Acquaintance (1979), Legend of the Galactic Heroes: Overture to a New War (1993),
 Blade Runner (1982), Akira (1988), Jim Henson's The Storyteller (1989), Infinity Train (2016)
 Apocalypse Now (1979), Legend of the Galactic Heroes: My Conquest Is the Sea of Stars (1988)
 
