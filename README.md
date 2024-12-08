@@ -147,7 +147,9 @@ python llm_recommendation_system.py
 **Favorite Movies:**
 
 The Lord of the Rings: The Two Towers - 5
+
 Rogue One: A Star Wars Story - 5
+
 WALL·E - 5
 
 **User Preferences:**
