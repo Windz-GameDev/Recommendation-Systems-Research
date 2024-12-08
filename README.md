@@ -146,9 +146,9 @@ python llm_recommendation_system.py
 
 **Favorite Movies:**
 
-The Lord of the Rings: The Two Towers - 5  
-Rogue One: A Star Wars Story - 5  
-WALL-E - 5  
+The Lord of the Rings: The Two Towers - 5
+Rogue One: A Star Wars Story - 5
+WALL·E - 5
 
 **User Preferences:**
 
@@ -174,22 +174,22 @@ Infinity War - Part II (2019), Avengers: Infinity War - Part I
 
 **Favorite Movies:**
 
-Tropic Thunder - 5  
-Coming to America - 4.5  
-Coming to America 2 - 5  
-Beverly Hills Cop Axel F - 4.5  
-Beetlejuice - 4  
-Beetlejuice Beetlejuice - 4.5  
-Vegas Vacation - 4  
-Christmas Vacation - 5  
-Grown Ups - 4.5  
-Grown Ups 2 - 4.5  
-Anchorman - 4.5  
-Anchorman 2 - 5  
+Tropic Thunder (2008) - 5
+Coming to America (1988) - 4.5
+Coming 2 America (2021) - 5
+Beverly Hills Cop: Axel F (2024) - 4.5
+Beetlejuice (1988) - 4
+Beetlejuice Beetlejuice (2024) - 4.5
+Vegas Vacation (1997) - 4
+National Lampoon's Christmas Vacation (1989) - 5
+Grown Ups (2010) - 4.5
+Grown Ups 2 (2013) - 4.5
+Anchorman: The Legend of Ron Burgundy (2004) - 4.5
+Anchorman 2: The Legend Continues (2013) - 5
 
 **User Preferences:**
 
-"Types of movies: action/adventure, comedy, romcom, suspense and thrillers, documentaries."
+"The types of movies I like are action/adventure, comedy, romcom, suspense and thrillers, and documentaries"
 
 **Top 10 recommendations according to SVD:**
 
@@ -216,10 +216,10 @@ Doctor Watson, Bill Burr: You People Are All the Same (2012).
 
 **Favorite Movies:**
 
-Top Gun Maverick - 4.5  
-The Final Countdown - 5  
-Star Trek Into Darkness - 5  
-My Cousin Vinny - 5  
+Top Gun Maverick - 4.5 
+The Final Countdown (1980) - 5
+Star Trek Into Darkness - 5
+My Cousin Vinny - 5
 
 **User Preferences:**
 
@@ -239,6 +239,37 @@ Firefly (2002), Wings of Hope (2000), Cosmos: A Spacetime
 Odyssey, Blue Planet II (2017), Cosmos, Good Will Hunting
 (1997), Future by Design (2006), His Last Vow, Hornblower: The
 Even Chance (1998), The Count of Monte Cristo (1998).
+
+---
+
+### User 4 [Prefered SVD Anonymously]:
+
+**Favorite Movies:**
+
+Kill Bill (2003) - 5.0
+Crossroads (1986) - 5.0
+Conan The Barbarian (1982) - 5.0
+Training Day (2001) - 5.0
+Outsiders (1983) - 5.0
+Full Metal Jacket (1987) - 5.0
+
+**User Preferences:**
+
+"I like movies that have great dialogue, and hints of supernatural elements. I love stories of epic tales."
+
+**Top 10 recommendations according to SVD:**
+
+The Godfather (1972), Citizen Kane (1941), 2001: A Space Odyssey (1968), 
+The Blue Planet (2001), Planet Earth (2006), Baseball (1994)
+Planet Earth II (2016), The Work of Director Chris Cunningham (2003),
+Cosmos, Near Death (1989)
+
+**Top 10 recommendations according to our LLM-enhanced:**
+
+Death Note: Desu nôto (2006–2007), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984)
+Sherlock Holmes and Dr. Watson: Acquaintance (1979), Legend of the Galactic Heroes: Overture to a New War (1993)
+Blade Runner (1982), Akira (1988), Jim Henson's The Storyteller (1989), Infinity Train (2016)
+Apocalypse Now (1979), Legend of the Galactic Heroes: My Conquest Is the Sea of Stars (1988)
 
 ---
 
