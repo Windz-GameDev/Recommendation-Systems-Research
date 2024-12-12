@@ -123,7 +123,7 @@ def get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe, i
 
 def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format, 
                                   descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, 
-                                  user_ids=None, use_llm=False, max_retries=5, delay_between_attempts=1):
+                                  user_ids=None, use_llm=False, max_retries=5, delay_between_attempts=1, num_favorites=3):
     '''
     Calculate the cumulative hit rate of the recommendation algorithm using leave-one-out cross-validation.
 
@@ -147,6 +147,7 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined
     - use_llm: Boolean flag to determine whether to use LLM-enhanced recommendations.
     - max_retries: Maximum number of retries for fetching movie data.
     - delay_between_attempts: Delay between retry attempts in seconds.
+    - num_favorites: The number of favorite movies to use for similarity score calculation.
 
     Returns:
     - hit_rate: The cumulative hit rate.
@@ -221,9 +222,13 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined
                 movie_descriptions = get_movie_descriptions(top_n_times_x_for_user, combined_dataframe, model_name, chat_format,
                                                             descriptions_path, api_url, headers, max_retries, delay_between_attempts)
 
+                # Get the user's favorite movies
+                favorite_movie_titles = get_user_favorite_movies(user_id, ratings_dataframe_testset_removed, id_to_title, num_favorites=num_favorites)
+
                 # Find top N similiar movies using LLM
                 top_n_similiar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title,
-                                                                  model_name, chat_format, n, api_url, headers)
+                                                                  model_name, chat_format, n, api_url, headers,
+                                                                  favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
 
                 llm_recommended_movie_ids = [rec_movie_id for rec_movie_id, _ in top_n_similiar_movies]
 
@@ -572,7 +577,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
 
     return descriptions
 
-def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers):
+def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, favorite_movies=None, num_favorites=3):
     """
     Finds the top N most similar movies to the user's input from a list of movie descriptions using a Large Language Model (LLM).
 
@@ -597,7 +602,7 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
     # Define the role and instructions with rating scale explanation
     role_instruction = (
         "You are a movie recommendation assistant. "
-        "Your task is to evaluate how well a movie description aligns with a user's stated preferences. "
+        "Your task is to evaluate how well a movie description aligns with a user's stated preferences and their favorite movies."
         "Always respond with a number between -1.0 and 1.0, where:\n"
         "-1.0 means the movie goes completely against their preferences,\n"
         "0 means neutral or there isn't enough information,\n"
@@ -609,24 +614,47 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         "#### START EXAMPLES ####\n"
         "Example 1:\n"
         "User input: I love science fiction with deep philosophical themes.\n"
+        "User's favorite movies:\n"
+        "Movie title: The Matrix\n"
+        "Movie title: Blade Runner\n"
+        "Movie title: Interstellar\n"
+        "New movie to evaluate:\n"
         "Movie title: Inception\n"
         "Movie description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "0.9\n"
         "Example 2:\n"
         "User input: I enjoy light-hearted comedies with a lot of humor.\n"
+        "User's favorite movies:\n"
+        "Movie title: The Hangover\n"
+        "Movie title: Superbad\n"
+        "Movie title: Step Brothers\n"
+        "New movie to evaluate:\n"
         "Movie title: The Dark Knight\n"
         "Movie description: Set within a year after the events of Batman Begins (2005), Batman, Lieutenant James Gordon, and new District Attorney Harvey Dent successfully begin to round up the criminals that plague Gotham City, until a mysterious and sadistic criminal mastermind known only as \"The Joker\" appears in Gotham, creating a new wave of chaos. Batman's struggle against The Joker becomes deeply personal, forcing him to \"confront everything he believes\" and improve his technology to stop him. A love triangle develops between Bruce Wayne, Dent, and Rachel Dawes.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "-0.7\n"
         "Example 3:\n"
         "User input: I am fascinated by historical documentaries.\n"
+        "User's favorite movies:\n"
+        "Movie title: They shall not grow old\n"
+        "Movie title: Apollo 11\n"
+        "Movie title: 13th\n"
+        "New movie to evaluate:\n"
         "Movie title: The Lord of the Rings: The Fellowship of the Ring\n"
         "Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "-0.5\n"
         "#### END EXAMPLES ####\n"
     )
+
+    # Add favorite movies to the prompt if provided
+    favorite_movies_prompt= ""
+    if favorite_movies:
+        num_to_include = min(num_favorites, len(favorite_movies))
+        favorite_movies_prompt="""User's favorite movies:\n"""
+        for title in favorite_movies[:num_to_include]:
+            favorite_movies_prompt += f"Movie title: {title}\n"
 
     for movie_id, description in movie_descriptions.items():
 
@@ -638,6 +666,8 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         prompt_content = (
             "#### USER INPUT ####\n"
             f"User input: {user_input}\n"
+            f"{favorite_movies_prompt}"
+            "New movie to evaluate:\n"
             f"Movie title: {movie_title}\n"
             f"Movie description: {description}\n"
             "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
@@ -662,7 +692,6 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
 
         if response.status_code == 200:
             content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
-            # print(content)
             try:
                 similarity_score = float(content)
                 # Clamp the similarity score between -1 and 1
@@ -683,6 +712,14 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
             similarity_score = 0.0
 
         similarity_scores.append((movie_id, similarity_score))
+
+        # Print the role instruction, full prompt, and response if the similarity score is above 0.5
+        '''
+        if similarity_score > 0.5:
+            print(f"Role Instruction:\n{role_instruction}\n")
+            print(f"Full Prompt for movie '{movie_title}':\n{full_prompt}\n")
+            print(f"Response for movie '{movie_title}': {content}\n")
+        '''
 
     # Sort the movies by similarity score in descending order and select the top N
     similarity_scores.sort(key=lambda x: x[1], reverse=True)
@@ -796,6 +833,24 @@ def test_api_call(model_name, prompt, chat_format, url, headers):
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
+
+def get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=3):
+    """
+    Retrieves a user's favorite movies based on their ratings.
+
+    Parameters:
+    - user_id (int): The ID of the user.
+    - ratings_dataframe (pandas.DataFrame): The DataFrame containing user ratings.
+    - id_to_title (dict): A dictionary mapping movie IDs to their titles.
+    - num_favorites (int): The number of favorite movies to retrieve (default is 3).
+
+    Returns:
+    - list: A list of the user's favorite movie titles.
+    """
+    user_ratings = ratings_dataframe[ratings_dataframe['userId'] == user_id]
+    favorite_movies = user_ratings.nlargest(num_favorites, 'rating')['movieId'].tolist()
+    favorite_movie_titles = [id_to_title[movie_id] for movie_id in favorite_movies]
+    return favorite_movie_titles
     
 def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format, url, headers):
     
@@ -1328,9 +1383,13 @@ def main():
     # Prepare to calculate cumulative hit rate for the new users using SVD
     print("\nCalculating cumulative hit rate...")
 
+    # Number of favorite movies to use for similarity score calculation
+    num_favorites = 3
+
     cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
         algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-        descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True
+        descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
+        num_favorites=num_favorites
     )
 
     '''
@@ -1379,8 +1438,12 @@ def main():
         movie_descriptions = get_movie_descriptions(top_n_for_user_extended, combined_dataframe, model_name, chat_format,
                                                     descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
 
+        # Get the user's favorite movies
+        favorite_movie_titles = get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=num_favorites)
+
         # Get recommendations using LLM-enhanced method
-        top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers)
+        top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers,
+                                                         favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
 
         # Print the best movie recommendations according to the traditional algorithm enhanced by the LLM
         print(f"\nTop {n} recommendations according to LLM-enhanced method:")
