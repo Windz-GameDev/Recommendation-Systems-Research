@@ -1241,216 +1241,241 @@ def main():
     # Ask how many users to add
     while True:
         try:
-            num_users = int(input("How many users would you like to add? (Minimum 1): "))
-            if num_users >= 1:
+            num_users = int(input("How many users would you like to add? (Enter 0 to calculate cumulative hit rate): "))
+            if num_users >= 0:
                 break
             else:
                 print("Please enter a number greater than or equal to 1.")
         except ValueError:
             print("Invalid input. Please enter a numeric value.")
 
-    new_user_ids = []
-    all_new_ratings = []
+    if num_users > 0:
+        new_user_ids = []
+        all_new_ratings = []
 
-    for user_num in range(1, num_users + 1):
-        print(f"\nCollecting data for User {user_num}:")
+        for user_num in range(1, num_users + 1):
+            print(f"\nCollecting data for User {user_num}:")
 
-        # Assign a new user ID
-        new_user_id = ratings_dataframe['userId'].max() + 1
-        new_user_ids.append(new_user_id)
+            # Assign a new user ID
+            new_user_id = ratings_dataframe['userId'].max() + 1
+            new_user_ids.append(new_user_id)
 
-        # Ask how many movies the user wants to rate
-        while True:
-            try:
-                n = int(input("How many movies would you like to rate? (Minimum 3): "))
-                if n >= 3:
-                    break
-                else:
-                    print("Please enter a number greater than or equal to 3.")
-            except ValueError:
-                print("Invalid input. Please enter a numeric value.")
-
-        # Step 1: Ask user for 5 movies they love
-        new_ratings = []
-
-        print(f"\nPlease enter {n} movies you love and rate them so we can learn about what you like:")
-
-        while len(new_ratings) < n:
-            movie_title = input(f"Movie {len(new_ratings) + 1} title: ")
-            
-            # Get the IMDbId
-            imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers)
-            if imdb_id:
-
-                # Convert the found IMDbId to an integer
-                imdb_id = int(imdb_id)
-
-                # Convert IMDbId to MovieLens movieId
-                movielens_id = imdb_to_movielens.get(imdb_id, None)
-                if movielens_id:
-                    # Map MovieLens MovieId back to title
-                    confirmed_title = id_to_title.get(movielens_id, None)
-                    if confirmed_title:
-                        # Confirm with user    
-                        confirmation = input(f"Is '{confirmed_title}' the movie you want to rate? (yes/no): ").strip().lower()
-                        if confirmation == "yes":
-                            while True:
-                                try:
-                                    rating_input = input(f"Rating for '{movie_title}' (0.5 stars - 5.0 stars): ")
-                                    rating = float(rating_input)
-                                    if 0.5 <= rating <= 5.0:
-                                        break
-                                    else:
-                                        print("Please enter a rating between 0.5 and 5.0.")
-                                except ValueError:
-                                    print("Invalid input. Please enter a numeric value for the rating.")
-                            # Get the current timestamp
-                            current_timestamp = int(time.time())
-
-                            # Create a new rating entry
-                            new_rating = {
-                                'userId': new_user_id,
-                                'movieId': movielens_id,
-                                'rating': rating,
-                                'timestamp': current_timestamp
-                            }
-                            new_ratings.append(new_rating)
-                            print(f"Added rating for '{confirmed_title}'.")
-                        else:
-                            print("Please try another movie.")
+            # Ask how many movies the user wants to rate
+            while True:
+                try:
+                    n = int(input("How many movies would you like to rate? (Minimum 3): "))
+                    if n >= 3:
+                        break
                     else:
-                        print(f"Could not confirm the title for MovieLens MovieId: {movielens_id}. Please try another movie.")
+                        print("Please enter a number greater than or equal to 3.")
+                except ValueError:
+                    print("Invalid input. Please enter a numeric value.")
+
+            # Step 1: Ask user for 5 movies they love
+            new_ratings = []
+
+            print(f"\nPlease enter {n} movies you love and rate them so we can learn about what you like:")
+
+            while len(new_ratings) < n:
+                movie_title = input(f"Movie {len(new_ratings) + 1} title: ")
+                
+                # Get the IMDbId
+                imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers)
+                if imdb_id:
+
+                    # Convert the found IMDbId to an integer
+                    imdb_id = int(imdb_id)
+
+                    # Convert IMDbId to MovieLens movieId
+                    movielens_id = imdb_to_movielens.get(imdb_id, None)
+                    if movielens_id:
+                        # Map MovieLens MovieId back to title
+                        confirmed_title = id_to_title.get(movielens_id, None)
+                        if confirmed_title:
+                            # Confirm with user    
+                            confirmation = input(f"Is '{confirmed_title}' the movie you want to rate? (yes/no): ").strip().lower()
+                            if confirmation == "yes":
+                                while True:
+                                    try:
+                                        rating_input = input(f"Rating for '{movie_title}' (0.5 stars - 5.0 stars): ")
+                                        rating = float(rating_input)
+                                        if 0.5 <= rating <= 5.0:
+                                            break
+                                        else:
+                                            print("Please enter a rating between 0.5 and 5.0.")
+                                    except ValueError:
+                                        print("Invalid input. Please enter a numeric value for the rating.")
+                                # Get the current timestamp
+                                current_timestamp = int(time.time())
+
+                                # Create a new rating entry
+                                new_rating = {
+                                    'userId': new_user_id,
+                                    'movieId': movielens_id,
+                                    'rating': rating,
+                                    'timestamp': current_timestamp
+                                }
+                                new_ratings.append(new_rating)
+                                print(f"Added rating for '{confirmed_title}'.")
+                            else:
+                                print("Please try another movie.")
+                        else:
+                            print(f"Could not confirm the title for MovieLens MovieId: {movielens_id}. Please try another movie.")
+                    else:
+                        print(f"Movie '{movie_title}' with IMDb ID '{imdb_id}' does not exist in the MovieLens dataset of the current size. Please try another movie.")
                 else:
-                    print(f"Movie '{movie_title}' with IMDb ID '{imdb_id}' does not exist in the MovieLens dataset of the current size. Please try another movie.")
+                    print(f"Could not find IMDb ID for movie '{movie_title}'. Please try another movie.")
+
+
+            # Extend the list of all new ratings
+            all_new_ratings.extend(new_ratings)
+
+            # Create a dataframe for the new ratings using the list of dictionaries
+            new_ratings_df = pd.DataFrame(new_ratings)
+
+            # Concatenate the new ratings DataFrame with the existing ratings DataFrame
+            ratings_dataframe = pd.concat([ratings_dataframe, new_ratings_df], ignore_index=True)
+
+            # After collecting movie ratings, ask the user if they want to describe their preferences.
+            describe_preferences = input("\nWould you like to describe your movie preferences? (yes/no): ").strip().lower()
+        
+            if describe_preferences == "no":
+
+                # Prepare data for fetching descriptions
+                rated_movies = [(rating['movieId'], id_to_title[rating['movieId']], rating['rating']) for rating in new_ratings]
+
+                # Fetch movie descriptions for all newly rated movies
+                movie_descriptions = get_movie_descriptions(rated_movies, combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
+
+                # Prepare data for preference generation
+                rated_movies_with_descriptions = [
+                    (movie_id, title, movie_descriptions[movie_id], rating) for movie_id, title, rating in rated_movies
+                ]
+
+                # Generate preferences using the rated movies
+                user_preferences = generate_preferences_from_rated_movies(rated_movies_with_descriptions, model_name, chat_format, api_url, headers)
             else:
-                print(f"Could not find IMDb ID for movie '{movie_title}'. Please try another movie.")
+                # Get user input for preferences
+                user_preferences = input("Please describe what kind of movie experiences you are looking for (1 or 2 sentences):\n")
+
+            # Output the generated or user-provided preferences
+            print("\nUser Preferences:")
+            print(user_preferences)
+
+            # Create a temporary dataframe for the new preference
+            new_preference = pd.DataFrame([{'userId': new_user_id, 'preferences': user_preferences}])
+
+            # Concat temp dataframe to the full preferences dataframe
+            preferences_df = pd.concat([preferences_df, new_preference], ignore_index=True)
+
+            # Save the updated preferences DataFrame
+            save_user_preferences(preferences_df, preferences_path)
+
+        # Define a Reader with the appropriate rating scale
+        reader = Reader(rating_scale=(0.5, 5.0))
+
+        # The dataframe must have three columns, corresponding to the user (raw) ids, the item (raw) ids, and the ratings in this order. 
+        # The reader object is also required with the rating_scale parameter specified.
+        data = Dataset.load_from_df(ratings_dataframe[['userId', 'movieId', 'rating']], reader)
+
+        # Create an SVD algorithm instance
+        algo = SVD()
+
+        # Prepare to calculate cumulative hit rate for the new users using SVD
+        print("\nCalculating cumulative hit rate...")
+
+        # Number of favorite movies to use for similarity score calculation
+        num_favorites = 3
+
+        cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
+            algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
+            descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
+            num_favorites=num_favorites
+        )
+
+        '''
+        cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
+            algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
+            descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True
+        )
+        '''
+
+        print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=10): {cumulative_hit_rate_svd_10:.2f}")
+        print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=10): {cumulative_hit_rate_llm_10:.2f}")
+
+        # Now, generate recommendations for each user using both methods
+        all_movie_ids = movies_dataframe['movieId'].unique()
+
+        # Build the full trainset
+        full_trainset = data.build_full_trainset()
+
+        # Train SVD on the full trainset
+        algo.fit(full_trainset)
+
+        for user_id in new_user_ids:
+            print(f"\nRecommendations for User {user_id}:")
+
+            # Set number of recommendations to generate with SVD, we will pick the top ten to compare with LLM
+            n_times_10 = 100
+
+            if n_times_10 >= 10:
+                n = int(n_times_10 / 10)
+            else:
+                n = n_times_10
+
+            # Get top n * 10 with traditional algorithm
+            top_n_for_user_extended = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe, id_to_title, n_times_10)
 
 
-        # Extend the list of all new ratings
-        all_new_ratings.extend(new_ratings)
+            # Print the top N recommendations for the user with estimated ratings
+            print(f"\nTop {n} recommendations according to SVD:")
+            for movie_id, movie_title, est_rating in top_n_for_user_extended[:n]:
+                print(f"Movie Title: {movie_title}, Estimated Rating: {est_rating:.2f}")
 
-        # Create a dataframe for the new ratings using the list of dictionaries
-        new_ratings_df = pd.DataFrame(new_ratings)
+            # Get this user's preferences
+            user_preferences = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
 
-        # Concatenate the new ratings DataFrame with the existing ratings DataFrame
-        ratings_dataframe = pd.concat([ratings_dataframe, new_ratings_df], ignore_index=True)
+            # Get movie descriptions for the top N * 10 movies
+            movie_descriptions = get_movie_descriptions(top_n_for_user_extended, combined_dataframe, model_name, chat_format,
+                                                        descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
 
-        # After collecting movie ratings, ask the user if they want to describe their preferences.
-        describe_preferences = input("\nWould you like to describe your movie preferences? (yes/no): ").strip().lower()
-    
-        if describe_preferences == "no":
+            # Get the user's favorite movies
+            favorite_movie_titles = get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=num_favorites)
 
-            # Prepare data for fetching descriptions
-            rated_movies = [(rating['movieId'], id_to_title[rating['movieId']], rating['rating']) for rating in new_ratings]
+            # Get recommendations using LLM-enhanced method
+            top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers,
+                                                            favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
 
-            # Fetch movie descriptions for all newly rated movies
-            movie_descriptions = get_movie_descriptions(rated_movies, combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
+            # Print the best movie recommendations according to the traditional algorithm enhanced by the LLM
+            print(f"\nTop {n} recommendations according to LLM-enhanced method:")
+            for movie_id, score in top_n_similar_movies:
+                movie_title = id_to_title[movie_id]
+                print(f"Movie Title: {movie_title}, Similarity Score: {score}")
+    else:
+        # Create an SVD algorithm instance
+        algo = SVD()
 
-            # Prepare data for preference generation
-            rated_movies_with_descriptions = [
-                (movie_id, title, movie_descriptions[movie_id], rating) for movie_id, title, rating in rated_movies
-            ]
+        # Proceed to calculate cumulative hit rates for all users
+        print("\nCalculating cumulative hit rates for all users...")
 
-            # Generate preferences using the rated movies
-            user_preferences = generate_preferences_from_rated_movies(rated_movies_with_descriptions, model_name, chat_format, api_url, headers)
-        else:
-            # Get user input for preferences
-            user_preferences = input("Please describe what kind of movie experiences you are looking for (1 or 2 sentences):\n")
+        # Define the list of n values
+        n_values = [10, 15, 20]
 
-        # Output the generated or user-provided preferences
-        print("\nUser Preferences:")
-        print(user_preferences)
+        # Number of favorites to use for similarity scoring
+        num_favorites = 3
 
-        # Create a temporary dataframe for the new preference
-        new_preference = pd.DataFrame([{'userId': new_user_id, 'preferences': user_preferences}])
+        # Loop over each n value
+        for n in n_values:
+            cumulative_hit_rate_svd, cumulative_hit_rate_llm = calculate_cumulative_hit_rate(
+                algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
+                descriptions_path, api_url, headers, preferences_path, n=n, threshold=4.0, user_ids=None, use_llm=True,
+                num_favorites=num_favorites
+            )
+            print(f"Cumulative Hit Rate for all users (SVD, threshold=4.0, n={n}): {cumulative_hit_rate_svd:.4f}")
+            print(f"Cumulative Hit Rate for all users (LLM-enhanced, threshold=4.0, n={n}): {cumulative_hit_rate_llm:.4f}")
 
-        # Concat temp dataframe to the full preferences dataframe
-        preferences_df = pd.concat([preferences_df, new_preference], ignore_index=True)
+        
 
-        # Save the updated preferences DataFrame
-        save_user_preferences(preferences_df, preferences_path)
-
-    # Define a Reader with the appropriate rating scale
-    reader = Reader(rating_scale=(0.5, 5.0))
-
-    # The dataframe must have three columns, corresponding to the user (raw) ids, the item (raw) ids, and the ratings in this order. 
-    # The reader object is also required with the rating_scale parameter specified.
-    data = Dataset.load_from_df(ratings_dataframe[['userId', 'movieId', 'rating']], reader)
-
-    # Create an SVD algorithm instance
-    algo = SVD()
-
-    # Prepare to calculate cumulative hit rate for the new users using SVD
-    print("\nCalculating cumulative hit rate...")
-
-    # Number of favorite movies to use for similarity score calculation
-    num_favorites = 3
-
-    cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
-        algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-        descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
-        num_favorites=num_favorites
-    )
-
-    '''
-    cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
-        algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-        descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True
-    )
-    '''
-
-    print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=10): {cumulative_hit_rate_svd_10:.2f}")
-    print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=10): {cumulative_hit_rate_llm_10:.2f}")
-
-    # Now, generate recommendations for each user using both methods
-    all_movie_ids = movies_dataframe['movieId'].unique()
-
-    # Build the full trainset
-    full_trainset = data.build_full_trainset()
-
-    # Train SVD on the full trainset
-    algo.fit(full_trainset)
-
-    for user_id in new_user_ids:
-        print(f"\nRecommendations for User {user_id}:")
-
-        # Set number of recommendations to generate with SVD, we will pick the top ten to compare with LLM
-        n_times_10 = 100
-
-        if n_times_10 >= 10:
-            n = int(n_times_10 / 10)
-        else:
-            n = n_times_10
-
-        # Get top n * 10 with traditional algorithm
-        top_n_for_user_extended = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe, id_to_title, n_times_10)
-
-
-        # Print the top N recommendations for the user with estimated ratings
-        print(f"\nTop {n} recommendations according to SVD:")
-        for movie_id, movie_title, est_rating in top_n_for_user_extended[:n]:
-            print(f"Movie Title: {movie_title}, Estimated Rating: {est_rating:.2f}")
-
-        # Get this user's preferences
-        user_preferences = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
-
-        # Get movie descriptions for the top N * 10 movies
-        movie_descriptions = get_movie_descriptions(top_n_for_user_extended, combined_dataframe, model_name, chat_format,
-                                                    descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
-
-        # Get the user's favorite movies
-        favorite_movie_titles = get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=num_favorites)
-
-        # Get recommendations using LLM-enhanced method
-        top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers,
-                                                         favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
-
-        # Print the best movie recommendations according to the traditional algorithm enhanced by the LLM
-        print(f"\nTop {n} recommendations according to LLM-enhanced method:")
-        for movie_id, score in top_n_similar_movies:
-            movie_title = id_to_title[movie_id]
-            print(f"Movie Title: {movie_title}, Similarity Score: {score}")
-    
 if __name__ == "__main__":
     main()
 
