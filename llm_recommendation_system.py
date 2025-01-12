@@ -295,36 +295,119 @@ def generate_description_with_few_shot(movie_title, model_name, chat_format, url
     else:
         return ""
     
-def get_imdb_id_by_title(title, model_name, chat_format, url, headers):
-    '''
-    Retrieve the IMDb ID for a movie given its title, using LLM for fuzzy matching if necessary.
+def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_selection=False, results_limit=20, page_limit=5, fetch_full_details=False):
+    """
+    Retrieve the IMDb ID for a movie given its title.
+
+    If manual_selection is True, the user will be asked to pick from the top few search results 
+    instead of letting the system do fuzzy matching automatically.
 
     Parameters:
     - title (str): The title of the movie.
-    - model_name (str): The name of the model to use for generating the similarity score.
-    - chat_format (str): A format string to structure the user input and movie description
+    - model_name (str): The name of the model to use for generating the similarity score (currently used in existing fuzzy matching logic).
+    - chat_format (str): A format string to structure the user input and movie description.
     - url (str): The API endpoint URL to send the request to.
     - headers (dict): The headers to include in the API request.
+    - manual_selection (bool): Whether to prompt the user manually for a selection among the search results.
+    - results_limit (int): Maximum number of search results to display when manual_selection is True.
+    - page_limit (int): Maximum number of search results to display per page when manual_selection is True.
 
     Returns:
-    - str: The IMDb ID of the movie, or None if not found.
-    '''
+    - tuple: A tuple containing the IMDb ID of the movie (str), the director (str), the cover URL (str), and the IMDb title (str), or (None, None, None, None) if not found.
+    """
 
     ia = Cinemagoer()
     try:
+
         # Search for the movie by title
-        search_results = ia.search_movie(title)
+        search_results = ia.search_movie(title, results_limit)
+
+        # If we want manual selection, present the top few results and let the user pick
+        if manual_selection:
+            if not search_results:
+                print(f"No search results found for '{title}'.")
+                return None, None, None, None
+
+            current_page = 0
+            total_results = len(search_results)
+            print(f"\nTotal Results: {total_results}")
+
+            while True:
+                start_index = current_page * page_limit
+                end_index = min(start_index + page_limit, total_results)
+
+                # Show the current page of search results
+                print(f"Search results for '{title}' (Page {current_page + 1}):")
+                for idx, movie in enumerate(search_results[start_index:end_index], start=start_index + 1):
+                    year_info = f" ({movie.get('year')})" if 'year' in movie else ""
+                    cover_url = movie.get('cover url', '')
+                    print(f"{idx}. {movie['title']}{year_info}")
+                    print(f"   Cover URL: {cover_url if cover_url else 'No cover image available.'}")
+
+                # Ask the user which one they meant or if they want to see more results
+                user_input = input(f"\nSelect the correct match by typing a number between {start_index + 1} and {end_index} (or 'n' for next page, 'p' for previous page, '0' to cancel): ").strip().lower()
+                if user_input == '0':
+                    print("Selection canceled.")
+                    return None, None, None, None
+                elif user_input == 'n':
+                    if end_index < total_results:
+                        current_page += 1
+                    else:
+                        print("You are on the last page. You can go back by entering 'p'.")
+                elif user_input == 'p':
+                    if current_page > 0:
+                        current_page -= 1
+                    else:
+                        print("You are on the first page.")
+                else:
+                    try:
+                        selection = int(user_input)
+                        if start_index + 1 <= selection <= end_index:
+                            selected_movie = search_results[selection - 1]
+                            imdb_id = selected_movie.movieID
+                            imdb_title = selected_movie['title']
+
+                            # Fetch full details if requested
+                            if fetch_full_details:
+                                full_movie = ia.get_movie(imdb_id)
+                                director = ', '.join([person['name'] for person in full_movie.get('director', [])])
+
+                                # First try to use full-size cover, if that fails, use the standard size cover, otherwise, default to an empty string
+                                cover_url = full_movie.get('full-size cover url', full_movie.get('cover url', ''))
+                            else:
+                                director = ''
+                                cover_url = selected_movie.get('cover url', '')
+
+                            print(f"Selected '{imdb_title}' with IMDb ID {imdb_id}.")
+                            return imdb_id, director, cover_url, imdb_title
+                        print(f"Please enter a valid number between {start_index + 1} and {end_index}, or 'n' for next page, 'p' for previous page, '0' to cancel.")
+                    except ValueError:
+                        print("Invalid input. Please enter a number or 'n' for next page, 'p' for previous page.")
+
+        # If using not using manual select, check for exact match
         for movie in search_results:
 
-            #Check if the result is a movie
-            if movie.get('kind') == 'movie':
-                # Check for an exact title match with case sensitivity
-                if movie['title'] == title:
-                    imdb_id = movie.movieID
-                    # print(f"Found exact match for '{title}': IMDb ID is {imdb_id}")
-                    return imdb_id
+            # Check if the result is a movie
+            # if movie.get('kind') == 'movie':
+            
+            # Check for an exact title match with case sensitivity
+            if movie['title'] == title:
+                imdb_id = movie.movieID
+                imdb_title = movie['title']
 
-        # If no exact match is found, use LLM to find the best match
+                # Fetch full details if requested
+                if fetch_full_details:
+                    full_movie = ia.get_movie(imdb_id)
+                    director = ', '.join([person['name'] for person in full_movie.get('director', [])])
+                    cover_url = full_movie.get('full-size cover url', full_movie.get('cover url', ''))
+                else:
+                    director = ''
+                    cover_url = movie.get('cover url', '')
+
+                # print(f"Found exact match for '{title}': IMDb ID is {imdb_id}")
+                return imdb_id, director, cover_url, imdb_title
+                
+        # If no exact match is found or manual selection is not used, use LLM to find the best match
         best_match = None
         highest_similarity = -1  
 
@@ -349,52 +432,62 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers):
         )
 
         for movie in search_results: 
-            if movie.get('kind') == 'movie':
-                movie_title = movie['title']
+            # if movie.get('kind') == 'movie':
+            movie_title = movie['title']
 
-                prompt_content = (
-                    f"User input: {title}\n"
-                    f"Movie title: {movie_title}\n"
-                    "How likely is it that this is the movie the user is looking for? (respond with a number between 0 and 1):\n"
-                )
+            prompt_content = (
+                f"User input: {title}\n"
+                f"Movie title: {movie_title}\n"
+                "How likely is it that this is the movie the user is looking for? (respond with a number between 0 and 1):\n"
+            )
 
-                full_prompt = few_shot_examples + "Now, respond to the following prompt:\n" + prompt_content
-                full_prompt_formatted = chat_format.format(prompt=full_prompt)
+            full_prompt = few_shot_examples + "Now, respond to the following prompt:\n" + prompt_content
+            full_prompt_formatted = chat_format.format(prompt=full_prompt)
 
-                payload = {
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful assistant that determines if a movie title matches the user's input. You always only respond with numbers between 0 and 1."},
-                        {"role": "user", "content": full_prompt_formatted}
-                    ],
-                    "max_tokens": 5,
-                    "temperature": 0
-                }
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant that determines if a movie title matches the user's input. You always only respond with numbers between 0 and 1."},
+                    {"role": "user", "content": full_prompt_formatted}
+                ],
+                "max_tokens": 5,
+                "temperature": 0
+            }
 
-                response = requests.post(url, headers=headers, json=payload)
-                if response.status_code == 200:
-                    content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
-                    try:
-                        similarity_score = float(content)
-                        # print(f"Similarity score for '{movie_title}': {similarity_score}")
-                    except ValueError: 
-                        print(f"Could not convert similarity score to float: {content}")
-                        similarity_score = -1 # Assign a default low similarity score
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code == 200:
+                content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
+                try:
+                    similarity_score = float(content)
+                    # print(f"Similarity score for '{movie_title}': {similarity_score}")
+                except ValueError: 
+                    print(f"Could not convert similarity score to float: {content}")
+                    similarity_score = -1 # Assign a default low similarity score
 
-                    if similarity_score > highest_similarity:
-                        highest_similarity = similarity_score
-                        best_match = movie
-                
-            if best_match:
-                imdb_id = best_match.movieID
-                # print(f"Best match for '{title}' using LLM: {best_match['title']} IMDb ID is {imdb_id}")
-                return imdb_id
+                if similarity_score > highest_similarity:
+                    highest_similarity = similarity_score
+                    best_match = movie
+            
+        if best_match:
+            imdb_id = best_match.movieID
+            imdb_title = best_match['title']
+
+            # Fetch full details if requested
+            if fetch_full_details:
+                full_movie = ia.get_movie(imdb_id)
+                director = ', '.join([person['name'] for person in full_movie.get('director', [])])
+                cover_url = full_movie.get('full-size cover url', full_movie.get('cover url', ''))
             else:
-                print(f"No match found for title in IMDb movies: {title}")
-                return None
+                director = ''
+                cover_url = best_match.get('cover url', '')
+
+            return imdb_id, director, cover_url, imdb_title
+        else:
+            print(f"No match found for title in IMDb movies: {title}")
+            return None, None, None, None
     except IMDbError as e:
         print(f"An error occured while searching for movie {title}'s IMDb ID: {e}")
-        return None
+        return None, None, None, None
 
 def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries=10, delay=1):
     
@@ -426,7 +519,7 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, h
             # Check if the error is an HTTP 404 error
             if 'HTTPError 404' in str(e):
                 print(f"HTTP 404 error encountered for {movie_title}'s IMDd ID {imdb_id}.  Attempting to find IMDb ID by title.")
-                imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, url, headers)
+                imdb_id, _, _, _ = get_imdb_id_by_title(movie_title, model_name, chat_format, url, headers)
                 if not imdb_id:
                     print(f"Could not find the IMDd ID with the title '{movie_title}'.")
                     return None
@@ -1274,13 +1367,20 @@ def main():
             # Step 1: Ask user for 5 movies they love
             new_ratings = []
 
+            # Ask the user if they want to use fuzzy matching or manual search
+            search_method = input("Do you want to use fuzzy matching or manually search for each movie? (fuzzy/manual): ").strip().lower()
+
             print(f"\nPlease enter {n} movies you love and rate them so we can learn about what you like:")
 
             while len(new_ratings) < n:
                 movie_title = input(f"Movie {len(new_ratings) + 1} title: ")
-                
-                # Get the IMDbId
-                imdb_id = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers)
+                             
+                # Get the IMDbId, director, cover URL, and IMDb title based on the selected search method
+                if search_method == 'fuzzy':
+                    imdb_id, director, cover_url, imdb_title = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers, fetch_full_details=True)
+                else:
+                    imdb_id, director, cover_url, imdb_title = get_imdb_id_by_title(movie_title, model_name, chat_format, api_url, headers, manual_selection=True, fetch_full_details=True)
+
                 if imdb_id:
 
                     # Convert the found IMDbId to an integer
@@ -1292,8 +1392,15 @@ def main():
                         # Map MovieLens MovieId back to title
                         confirmed_title = id_to_title.get(movielens_id, None)
                         if confirmed_title:
+
+                            # Display all movie information
+                            print(f"IMDb Title: {imdb_title}")
+                            print(f"MovieLens Title: {confirmed_title}")
+                            print(f"Director: {director}")
+                            print(f"Full Size Cover URL: {cover_url if cover_url else 'No cover image available.'}")
+                    
                             # Confirm with user    
-                            confirmation = input(f"Is '{confirmed_title}' the movie you want to rate? (yes/no): ").strip().lower()
+                            confirmation = input(f"Is this the movie you want to rate? (yes/no): ").strip().lower()
                             if confirmation == "yes":
                                 while True:
                                     try:

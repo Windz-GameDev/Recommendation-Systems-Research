@@ -53,6 +53,8 @@ Our research has identified several areas for future improvement and expansion o
 
 6. **Balancing Traditional and LLM-enhanced Recommendations**: While the framework enhances traditional algorithms, it is not intended to replace them entirely. Instead, it offers streaming customers a way to refine recommendations by providing specific tastes and interests, thereby improving the prediction results of existing algorithms.
 
+7. **Attempt to Improve Similarity Score Conversion from LLM to Floating Point.**: The system sometimes fails to correct convert similarity scores to floating point, resulting into movies which should have a higher similarity score than the actual movies recommended not being recommended first.
+
 These goals are designed to improve the system's performance, user satisfaction, and scalability, ensuring it remains a valuable tool for personalized movie recommendations.
 
 ## Modes of Operation
@@ -214,7 +216,7 @@ Doctor Watson, Bill Burr: You People Are All the Same (2012).
 
 **Favorite Movies:**
 
-1. Top Gun Maverick - 4.5 
+1. Top Gun Maverick - 4.5
 2. The Final Countdown (1980) - 5
 3. Star Trek Into Darkness - 5
 4. My Cousin Vinny - 5
@@ -257,7 +259,7 @@ Even Chance (1998), The Count of Monte Cristo (1998).
 
 **Top 10 recommendations according to SVD:**
 
-The Godfather (1972), Citizen Kane (1941), 2001: A Space Odyssey (1968), 
+The Godfather (1972), Citizen Kane (1941), 2001: A Space Odyssey (1968),
 The Blue Planet (2001), Planet Earth (2006), Baseball (1994)
 Planet Earth II (2016), The Work of Director Chris Cunningham (2003),
 Cosmos, Near Death (1989)
