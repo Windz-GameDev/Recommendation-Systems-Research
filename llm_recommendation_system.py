@@ -788,11 +788,10 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
                 {"role": "system", "content": role_instruction},
                 {"role": "user", "content": full_prompt}
             ],
-            "max_tokens": 10,
+            "max_tokens": 5,
             "temperature": 0.7  # Temperature of 0.7 to encourage adaptability and prevent the LLM from repeating mistakes
         }
 
-        
         similarity_score = 0.0  # Default score
         retries = 0
 
@@ -1520,27 +1519,27 @@ def main():
         # Number of favorite movies to use for similarity score calculation
         num_favorites = 3
 
-        
         cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
             descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
             num_favorites=num_favorites
         )
         
-        
+        '''
         cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
             descriptions_path, api_url, headers, preferences_path, n=100, threshold=4.0, user_ids=new_user_ids, use_llm=True
         )
-        
-
+        '''
         
         print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=10): {cumulative_hit_rate_svd_10:.2f}")
         print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=10): {cumulative_hit_rate_llm_10:.2f}")
     
+        '''
         print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=100): {cumulative_hit_rate_svd_100:.2f}")
         print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=100): {cumulative_hit_rate_llm_100:.2f}")
-
+        '''
+        
         # Now, generate recommendations for each user using both methods
         all_movie_ids = movies_dataframe['movieId'].unique()
 
@@ -1563,7 +1562,6 @@ def main():
 
             # Get top n * 10 with traditional algorithm
             top_n_for_user_extended = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe, id_to_title, n_times_10)
-
 
             # Print the top N recommendations for the user with estimated ratings
             print(f"\nTop {n} recommendations according to SVD:")
