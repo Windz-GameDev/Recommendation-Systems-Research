@@ -2,6 +2,9 @@ from surprise import Dataset, Reader, SVD, accuracy
 from surprise.model_selection import train_test_split, cross_validate
 import pandas as pd
 
+# Used for extracting similarity scores from LLM string responses
+import re
+
 # Used for handling API requests to LLM
 import requests
 
@@ -670,11 +673,16 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
 
     return descriptions
 
-def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, favorite_movies=None, num_favorites=3):
+def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, favorite_movies=None, num_favorites=3, max_retries=3):
     """
-    Finds the top N most similar movies to the user's input from a list of movie descriptions using a Large Language Model (LLM).
+    Finds the top N most similar movies to the user's input from a dictionary mapping of movie ids to descriptions using a Large Language Model (LLM).
 
-    This function leverages an LLM to evaluate the similarity between a user's preferences and a set of movie descriptions. It constructs a prompt for the LLM using few-shot examples to guide the model in generating a similarity score for each movie. The top N movies with the highest similarity scores are returned.
+    It constructs a prompt for the LLM using few-shot examples to guide the model in generating a similarity score for each movie. 
+    The function attempts to extract a similarity score from the LLM's response and convert it to a float. 
+    If that fails, the function uses a regular expression to extract a number from the LLM's response.
+    If there is no number in the response, it retries by generating another response. 
+    If no valid number is found after the specified number of max_retries, a default similarity score of 0.0 is used.
+    Once a similarity score has been calculated for each movie id in movie_descriptions dictionary, the function returns the top N movies with the highest similarity scores.
 
     Parameters:
     - user_input (str): A string describing the user's movie preferences.
@@ -685,6 +693,9 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
     - n (int): The number of top similar movies to return.
     - url (str): The API endpoint URL to send the request to.
     - headers (dict): The headers to include in the API request.
+    - favorite_movies (list of str, optional): A list of the user's favorite movies to include in the prompt. Defaults to None.
+    - num_favorites (int, optional): The number of favorite movies to include in the prompt. Defaults to 3.
+    - max_retries (int, optional): The maximum number of retries to attempt if the LLM response cannot be converted to a float. Defaults to 3.
 
     Returns:
     - top_n_movies (list of tuples): A list of tuples containing the movie ID and similarity score of the top N most similar movies.
@@ -777,32 +788,47 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
                 {"role": "system", "content": role_instruction},
                 {"role": "user", "content": full_prompt}
             ],
-            "max_tokens": 5,
+            "max_tokens": 10,
             "temperature": 0.7  # Temperature of 0.7 to encourage adaptability and prevent the LLM from repeating mistakes
         }
 
-        response = requests.post(url, headers=headers, json=payload)
+        
+        similarity_score = 0.0  # Default score
+        retries = 0
 
-        if response.status_code == 200:
-            content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
-            try:
-                similarity_score = float(content)
-                # Clamp the similarity score between -1 and 1
-                if similarity_score < -1.0:
-                    similarity_score = -1.0
-                elif similarity_score > 1.0:
-                    similarity_score = 1.0
-            except ValueError:
-                print(f"Could not convert similarity score to float for movie '{movie_title}': {content}")
-                
-                # Assign a similarity score of 0 if conversion fails 
-                similarity_score = 0.0
+        while retries < max_retries:
+            response = requests.post(url, headers=headers, json=payload)
 
-        else: 
-            print(f"Request failed for movie '{movie_title}' with status code {response.status_code}")
+            if response.status_code == 200:
+                content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
+                try:
+                    similarity_score = float(content)
+                    # Clamp the similarity score between -1 and 1
+                    if similarity_score < -1.0:
+                        similarity_score = -1.0
+                    elif similarity_score > 1.0:
+                        similarity_score = 1.0
+                    break  # Exit the retry loop if successful
+                except ValueError:
+                    # Attempt to extract a number from the response string
+                    match = re.search(r"-?\d+(\.\d+)?", content)
+                    if match:
+                        similarity_score = float(match.group())
+                        # Clamp the similarity score between -1 and 1
+                        if similarity_score < -1.0:
+                            similarity_score = -1.0
+                        elif similarity_score > 1.0:
+                            similarity_score = 1.0
+                        break  # Exit the retry loop if successful
+                    else:
+                        print(f"Could not convert similarity score to float for movie '{movie_title}': {content}")
+            else:
+                print(f"Request failed for movie '{movie_title}' with status code {response.status_code}")
 
-            # Assign a similarity score of 0 for failed requests
-            similarity_score = 0.0
+            retries += 1
+
+        # Debug: Print each similarity score and its type
+        # print(f"Movie Title: {movie_title}, Movie ID: {movie_id}, Similarity Score: {similarity_score}, Type: {type(similarity_score)}")
 
         similarity_scores.append((movie_id, similarity_score))
 
@@ -1494,21 +1520,26 @@ def main():
         # Number of favorite movies to use for similarity score calculation
         num_favorites = 3
 
+        
         cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
             descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
             num_favorites=num_favorites
         )
-
-        '''
+        
+        
         cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-            descriptions_path, api_url, headers, preferences_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True
+            descriptions_path, api_url, headers, preferences_path, n=100, threshold=4.0, user_ids=new_user_ids, use_llm=True
         )
-        '''
+        
 
+        
         print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=10): {cumulative_hit_rate_svd_10:.2f}")
         print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=10): {cumulative_hit_rate_llm_10:.2f}")
+    
+        print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=100): {cumulative_hit_rate_svd_100:.2f}")
+        print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=100): {cumulative_hit_rate_llm_100:.2f}")
 
         # Now, generate recommendations for each user using both methods
         all_movie_ids = movies_dataframe['movieId'].unique()
