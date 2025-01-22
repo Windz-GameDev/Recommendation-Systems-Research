@@ -24,6 +24,10 @@ import random
 import argparse
 import os
 
+# Used for generating accurate movie release date preferences
+import datetime
+
+
 # Function to create mapping dictionaries between MovieLens Movie IDs and Movie titles
 def create_movie_mappings(movies_df):
     """
@@ -220,6 +224,9 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined
 
                 # Get user preferences
                 user_preferences = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
+
+                # Get the user's date range
+                user_date_range = preferences_df.loc[preferences_df['userId'] == user_id, 'date_range'].iloc[0]
                 
                 # Get movie descriptions
                 movie_descriptions = get_movie_descriptions(top_n_times_x_for_user, combined_dataframe, model_name, chat_format,
@@ -231,7 +238,7 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined
                 # Find top N similiar movies using LLM
                 top_n_similiar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title,
                                                                   model_name, chat_format, n, api_url, headers,
-                                                                  favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
+                                                                  favorite_movies=favorite_movie_titles, num_favorites=num_favorites, date_range=user_date_range)
 
                 llm_recommended_movie_ids = [rec_movie_id for rec_movie_id, _ in top_n_similiar_movies]
 
@@ -673,7 +680,7 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
 
     return descriptions
 
-def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, favorite_movies=None, num_favorites=3, max_retries=3):
+def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, favorite_movies=None, num_favorites=3, max_retries=3, date_range=None):
     """
     Finds the top N most similar movies to the user's input from a dictionary mapping of movie ids to descriptions using a Large Language Model (LLM).
 
@@ -696,6 +703,7 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
     - favorite_movies (list of str, optional): A list of the user's favorite movies to include in the prompt. Defaults to None.
     - num_favorites (int, optional): The number of favorite movies to include in the prompt. Defaults to 3.
     - max_retries (int, optional): The maximum number of retries to attempt if the LLM response cannot be converted to a float. Defaults to 3.
+    - date_range (tuple, optional): A tuple containing the start and end year of the user's preferred movie date range. Defaults to None.
 
     Returns:
     - top_n_movies (list of tuples): A list of tuples containing the movie ID and similarity score of the top N most similar movies.
@@ -719,33 +727,36 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         "Example 1:\n"
         "User input: I love science fiction with deep philosophical themes.\n"
         "User's favorite movies:\n"
-        "Movie title: The Matrix\n"
-        "Movie title: Blade Runner\n"
-        "Movie title: Interstellar\n"
+        "Movie title: The Matrix (1999)\n"
+        "Movie title: Blade Runner (1982)\n"
+        "Movie title: Interstellar (2014)\n"
+        "Preferred Release Date Range: I prefer movies released between 1980 and 2020.\n"
         "New movie to evaluate:\n"
-        "Movie title: Inception\n"
+        "Movie title: Inception (2010)\n"
         "Movie description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "0.9\n"
         "Example 2:\n"
         "User input: I enjoy light-hearted comedies with a lot of humor.\n"
         "User's favorite movies:\n"
-        "Movie title: The Hangover\n"
-        "Movie title: Superbad\n"
-        "Movie title: Step Brothers\n"
+        "Movie title: The Hangover (2009)\n"
+        "Movie title: Superbad (2007)\n"
+        "Movie title: Step Brothers (2008)\n"
+        "Preferred Release Date Range: I prefer movies released between 2000 and 2010.\n"
         "New movie to evaluate:\n"
-        "Movie title: The Dark Knight\n"
+        "Movie title: The Dark Knight (2008)\n"
         "Movie description: Set within a year after the events of Batman Begins (2005), Batman, Lieutenant James Gordon, and new District Attorney Harvey Dent successfully begin to round up the criminals that plague Gotham City, until a mysterious and sadistic criminal mastermind known only as \"The Joker\" appears in Gotham, creating a new wave of chaos. Batman's struggle against The Joker becomes deeply personal, forcing him to \"confront everything he believes\" and improve his technology to stop him. A love triangle develops between Bruce Wayne, Dent, and Rachel Dawes.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "-0.7\n"
         "Example 3:\n"
         "User input: I am fascinated by historical documentaries.\n"
         "User's favorite movies:\n"
-        "Movie title: They shall not grow old\n"
-        "Movie title: Apollo 11\n"
-        "Movie title: 13th\n"
+        "Movie title: They shall not grow old (2018)\n"
+        "Movie title: Apollo 11 (2019)\n"
+        "Movie title: 13th (2016)\n"
+        "Preferred Release Date Range: I prefer movies released between 2010 and 2020.\n"
         "New movie to evaluate:\n"
-        "Movie title: The Lord of the Rings: The Fellowship of the Ring\n"
+        "Movie title: The Lord of the Rings: The Fellowship of the Ring (2001)\n"
         "Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "-0.5\n"
@@ -760,17 +771,22 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         for title in favorite_movies[:num_to_include]:
             favorite_movies_prompt += f"Movie title: {title}\n"
 
+    # Add date range to the user input if provided
+    date_range_prompt = ""
+    if date_range:
+        date_range_prompt = f"Preferred Release Date Range: I prefer movies released between {date_range[0]} and {date_range[1]}."
+
     for movie_id, description in movie_descriptions.items():
 
         # Get the title for the prompt
         movie_title = id_to_title[movie_id]
-
 
         # Format the prompt using the provided chat format
         prompt_content = (
             "#### USER INPUT ####\n"
             f"User input: {user_input}\n"
             f"{favorite_movies_prompt}"
+            f"{date_range_prompt}\n"
             "New movie to evaluate:\n"
             f"Movie title: {movie_title}\n"
             f"Movie description: {description}\n"
@@ -954,7 +970,8 @@ def test_api_call(model_name, prompt, chat_format, url, headers):
 
 def get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=3):
     """
-    Retrieves a user's favorite movies based on their ratings.
+    Retrieves a user's favorite movies based on their ratings in the `ratings_dataframe` by selecting the top `num_favorites` rated movies using the `nlargest` method.
+
 
     Parameters:
     - user_id (int): The ID of the user.
@@ -1079,9 +1096,19 @@ def load_user_preferences(preferences_path, max_user_id):
         all_user_ids = pd.DataFrame({'userId': range(1, max_user_id + 1)})
         complete_preferences_df = pd.merge(all_user_ids, preferences_df, on='userId', how='left')
         complete_preferences_df['preferences'].fillna("", inplace=True)
+        # Initialize date_range column if it doesn't exist
+        if 'date_range' in complete_preferences_df.columns:
+            complete_preferences_df['date_range'].fillna(value="", inplace=True)
+            complete_preferences_df['date_range'] = complete_preferences_df['date_range'].apply(lambda x: None if x == "" else x)
+        else:
+            complete_preferences_df['date_range'] = None
     else:
         # Create a DataFrame with all user IDs from 1 to max_user_id
-        complete_preferences_df = pd.DataFrame({'userId': range(1, max_user_id + 1), 'preferences': [""] * max_user_id})
+        complete_preferences_df = pd.DataFrame({
+            'userId': range(1, max_user_id + 1),
+            'preferences': [""] * max_user_id,
+            'date_range': [None] * max_user_id
+        })
 
     return complete_preferences_df
 
@@ -1182,11 +1209,12 @@ def retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descr
 
 def generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_name, chat_format, preferences_path, url, headers, start_user_id=1):
     """
-    Generate preferences for all users starting from a specific user ID.
+    Generate and update user preferences and date ranges for all users starting from a specific user ID.
 
     This function iterates over all users in the ratings DataFrame, starting from the specified user ID.
-    It generates user preferences based on the top 10 rated movies for each user. The preferences are saved
-    to a CSV file every 100 users to prevent data loss.
+    For each user, it generates preferences based on their top 10 rated movies and calculates a preferred
+    movie release date range. The preferences and date ranges are saved to a CSV file every 100 users to
+    prevent data loss.
 
     Parameters:
     - ratings_dataframe (pandas.DataFrame): DataFrame containing all movie ratings made by users.
@@ -1200,14 +1228,25 @@ def generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_n
 
     Returns:
     - None
+
+    Notes:
+    - The function skips users for whom both preferences and date ranges are already cached.
+    - Preferences are generated using the top 10 rated movies for each user.
+    - The date range is calculated based on the release years of the top-rated movies, rounded to the nearest decade.
+    - The function ensures that preferences and date ranges are saved periodically to avoid data loss.
     """
+
     # Load existing user preferences from the CSV file, ensuring all user IDs are present
     preferences_df = load_user_preferences(preferences_path, ratings_dataframe['userId'].max())
 
     # Iterate over each user ID starting from the specified start_user_id
     for user_id in range(start_user_id, ratings_dataframe['userId'].max() + 1):
+
         # Check if preferences for this user are already cached
-        if preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0] != "":
+        user_preferences_cached = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
+        date_range_cached = preferences_df.loc[preferences_df['userId'] == user_id, 'date_range'].iloc[0]
+
+        if user_preferences_cached and date_range_cached:
             continue
 
         # Get all ratings for the current user
@@ -1222,11 +1261,35 @@ def generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_n
             for index, row in top_rated_movies.iterrows()
         ]
 
-        # Generate user preferences based on the top-rated movies with descriptions
-        user_preferences = generate_preferences_from_rated_movies(rated_movies, model_name, chat_format, url, headers)
-        
-        # Update the preferences DataFrame with the new preferences for the current user
-        preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'] = user_preferences
+        # Generate user preferences based on the top-rated movies with descriptions if not already cached
+        if not user_preferences_cached:
+            user_preferences = generate_preferences_from_rated_movies(rated_movies, model_name, chat_format, url, headers)
+            preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'] = user_preferences
+
+        # Calculate the date range if not already cached
+        if not date_range_cached:
+            # Extract years from movie titles
+            years = [extract_year_from_title(title) for _, title, _, _ in rated_movies]
+            years = [year for year in years if year is not None]
+
+            if years:
+                min_year = min(years)
+                max_year = max(years)
+
+                # Round down to the first year of the decade for the min year
+                min_year = (min_year // 10) * 10
+
+                # Round up to the first year of the next decade for the max year
+                current_year = datetime.datetime.now().year
+                max_year = ((max_year // 10) + 1) * 10
+                max_year = min(max_year, current_year)  # Ensure max_year does not exceed the current year
+
+                date_range = (min_year, max_year)
+                print(f"User {user_id}: Calculated date range: {date_range}")  # Debugging line
+
+                idx = preferences_df.loc[preferences_df['userId'] == user_id].index
+                if len(idx) == 1:
+                    preferences_df.at[idx[0], 'date_range'] = date_range
 
         # Save the preferences to the CSV file every 100 users
         if user_id % 100 == 0:
@@ -1234,6 +1297,25 @@ def generate_all_user_preferences(ratings_dataframe, combined_dataframe, model_n
 
     # Always save the preferences at the end
     save_user_preferences(preferences_df, preferences_path)
+
+# Function to extract the year from a movie title
+def extract_year_from_title(title):
+    """
+    Extracts the release year from a movie title.
+
+    The function searches for a four-digit year enclosed in parentheses within the movie title.
+    If a year is found, it is returned as an integer. If no year is found, the function returns None.
+
+    Parameters:
+    - title (str): The movie title, which may include the release year in parentheses.
+
+    Returns:
+    - int or None: The release year as an integer if found, otherwise None.
+    """
+    match = re.search(r'\((\d{4})\)', title)
+    if match:
+        return int(match.group(1))
+    return None
 
 def main():
 
@@ -1458,7 +1540,6 @@ def main():
                 else:
                     print(f"Could not find IMDb ID for movie '{movie_title}'. Please try another movie.")
 
-
             # Extend the list of all new ratings
             all_new_ratings.extend(new_ratings)
 
@@ -1471,6 +1552,8 @@ def main():
             # After collecting movie ratings, ask the user if they want to describe their preferences.
             describe_preferences = input("\nWould you like to describe your movie preferences? (yes/no): ").strip().lower()
         
+            date_range = None
+
             if describe_preferences == "no":
 
                 # Prepare data for fetching descriptions
@@ -1490,12 +1573,39 @@ def main():
                 # Get user input for preferences
                 user_preferences = input("Please describe what kind of movie experiences you are looking for (1 or 2 sentences):\n")
 
+                # Ask the user if they want to specify a preferred release date range
+                specify_date_range = input("Would you like to specify a preferred release date range for recommended movies? (yes/no): ").strip().lower()
+                if specify_date_range == "yes":
+                    start_year = int(input("Enter the earliest release date year preferred: "))
+                    end_year = int(input("Enter the latest release date year preferred: "))
+
+                    date_range = (start_year, end_year)
+
+            # Automatically determine the date range if not provided
+            if date_range is None:
+                years = [extract_year_from_title(id_to_title[rating['movieId']]) for rating in new_ratings]
+                years = [year for year in years if year is not None]
+                if years:
+                    min_year = min(years)
+                    max_year = max(years)
+
+                    # Round down to the first year of the decade for the min year
+                    min_year = (min_year // 10) * 10
+
+                    # Round up to the first year of the next decade for the max year
+                    current_year = datetime.datetime.now().year
+                    max_year = ((max_year // 10) + 1) * 10
+                    max_year = min(max_year, current_year)  # Ensure max_year does not exceed the current year
+
+                    date_range = (min_year, max_year)
+
             # Output the generated or user-provided preferences
             print("\nUser Preferences:")
             print(user_preferences)
+            print(f"Preferred Release Date Range: {date_range[0]} - {date_range[1]}")
 
             # Create a temporary dataframe for the new preference
-            new_preference = pd.DataFrame([{'userId': new_user_id, 'preferences': user_preferences}])
+            new_preference = pd.DataFrame([{'userId': new_user_id, 'preferences': user_preferences, 'date_range': date_range}])
 
             # Concat temp dataframe to the full preferences dataframe
             preferences_df = pd.concat([preferences_df, new_preference], ignore_index=True)
@@ -1571,6 +1681,9 @@ def main():
             # Get this user's preferences
             user_preferences = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
 
+            # Get the user's preferred movie release date range
+            user_date_range = preferences_df.loc[preferences_df['userId'] == user_id, 'date_range'].iloc[0]
+
             # Get movie descriptions for the top N * 10 movies
             movie_descriptions = get_movie_descriptions(top_n_for_user_extended, combined_dataframe, model_name, chat_format,
                                                         descriptions_path, api_url, headers, max_retries=5, delay_between_attempts=1)
@@ -1580,7 +1693,7 @@ def main():
 
             # Get recommendations using LLM-enhanced method
             top_n_similar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions, id_to_title, model_name, chat_format, n, api_url, headers,
-                                                            favorite_movies=favorite_movie_titles, num_favorites=num_favorites)
+                                                            favorite_movies=favorite_movie_titles, num_favorites=num_favorites, date_range=user_date_range)
 
             # Print the best movie recommendations according to the traditional algorithm enhanced by the LLM
             print(f"\nTop {n} recommendations according to LLM-enhanced method:")

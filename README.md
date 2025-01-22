@@ -41,7 +41,7 @@ Our work is part of a GRE research project at the University of North Florida by
 
 Our research has identified several areas for future improvement and expansion of the LLM-enhanced Movie Recommendation System:
 
-1. **Incorporating Additional Context in User Preference Summaries**: We plan to enhance user preference summaries by including more detailed information such as favorite movies, genres, and main cast members. This additional context will help improve the accuracy of similarity scoring between user preferences and movie descriptions.
+1. **Incorporating Additional Context in User Preference Summaries**: We plan to enhance user preference summaries by including more detailed information such as user's preferred movie release date range, genres, and main cast members. This additional context will help improve the accuracy of similarity scoring between user preferences and movie descriptions.
 
 2. **Expanding Movie Descriptions**: We aim to enrich movie descriptions by incorporating factors such as IMDb's popularity ranks and main cast members. This will address user feedback about unfamiliar movies and actors in recommendations, thereby increasing user confidence in the system's suggestions.
 
