@@ -568,7 +568,7 @@ def load_cached_descriptions(descriptions_path, max_movie_id):
         # Ensure all movie IDs from 1 to max_movie_id are present
         all_movie_ids = pd.DataFrame({'movieId': range(1, max_movie_id + 1)})
         complete_cached_descriptions = pd.merge(all_movie_ids, cached_descriptions, on='movieId', how='left')
-        complete_cached_descriptions['description'].fillna("", inplace=True)
+        complete_cached_descriptions['description'] = complete_cached_descriptions['description'].fillna("")
     else:
         # Create a DataFrame with all movie IDs from 1 to max_movie_id
         complete_cached_descriptions = pd.DataFrame({'movieId': range(1, max_movie_id + 1), 'description': [""] * max_movie_id})
@@ -1095,10 +1095,10 @@ def load_user_preferences(preferences_path, max_user_id):
         # Ensure all user IDs from 1 to max_user_id are present
         all_user_ids = pd.DataFrame({'userId': range(1, max_user_id + 1)})
         complete_preferences_df = pd.merge(all_user_ids, preferences_df, on='userId', how='left')
-        complete_preferences_df['preferences'].fillna("", inplace=True)
+        complete_preferences_df['preferences'] = complete_preferences_df['preferences'].fillna("")
         # Initialize date_range column if it doesn't exist
         if 'date_range' in complete_preferences_df.columns:
-            complete_preferences_df['date_range'].fillna(value="", inplace=True)
+            complete_preferences_df['date_range'] = complete_preferences_df['date_range'].fillna(value="")
             complete_preferences_df['date_range'] = complete_preferences_df['date_range'].apply(lambda x: None if x == "" else x)
         else:
             complete_preferences_df['date_range'] = None
@@ -1708,7 +1708,7 @@ def main():
         print("\nCalculating cumulative hit rates for all users...")
 
         # Define the list of n values
-        n_values = [10, 15, 20]
+        n_values = [10, 15, 20, 100]
 
         # Number of favorites to use for similarity scoring
         num_favorites = 3

@@ -100,10 +100,10 @@ To get started with the LLM-enhanced Movie Recommendation System, follow these s
 git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd Recommendation-Systems-Research
 ```
 
-2. Install the required Python packages:
+2. Set up new Python environment using Conda and activate it. After, install core dependencies with the following command.
 
 ```bash
-pip install -r requirements.txt
+conda install -c conda-forge scikit-surprise pandas numpy requests cinemagoer
 ```
 
 3.  Set up the local LLM model:
