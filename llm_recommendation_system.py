@@ -1705,7 +1705,7 @@ def main():
             while True:
                 try:
                     n = int(input("How many movies would you like to rate? (Minimum 3): "))
-                    if n >= 1:
+                    if n >= 3:
                         break
                     else:
                         print("Please enter a number greater than or equal to 3.")
