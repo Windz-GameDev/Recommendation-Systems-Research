@@ -291,7 +291,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 290,110729.0,7.9,4.0,37881.0
 291,,,,
 292,,,,
-293,,,,
+293,110413,8.5,100,1290089
 294,,,,
 295,,,,
 296,110912.0,8.9,100.0,2301736.0
@@ -929,7 +929,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 928,32976.0,8.1,15.0,151268.0
 929,,,,
 930,38787.0,7.9,11.0,109964.0
-931,,,,
+931,38109,7.5,5,54033
 932,,,,
 933,48728.0,7.4,8.0,82712.0
 934,,,,
@@ -1071,7 +1071,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1070,,,,
 1071,,,,
 1072,,,,
-1073,,,,
+1073,67992,7.8,24,235031
 1074,,,,
 1075,,,,
 1076,,,,
@@ -1082,7 +1082,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1081,,,,
 1082,,,,
 1083,,,,
-1084,61418,7.7,12,123607
+1084,61418.0,7.7,12.0,123607.0
 1085,,,,
 1086,46912.0,8.2,20.0,195641.0
 1087,,,,
@@ -1273,7 +1273,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1272,66206.0,7.9,11.0,110205.0
 1273,,,,
 1274,94625.0,8.0,21.0,213309.0
-1275,,,,
+1275,91203,7.0,15,151765
 1276,61512.0,8.0,19.0,193302.0
 1277,,,,
 1278,72431.0,8.0,17.0,174094.0
@@ -1282,7 +1282,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1281,32553.0,8.4,25.0,246464.0
 1282,,,,
 1283,44706.0,7.9,11.0,112714.0
-1284,38355,7.9,9,92687
+1284,38355.0,7.9,9.0,92687.0
 1285,,,,
 1286,,,,
 1287,,,,
@@ -1651,7 +1651,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1650,,,,
 1651,,,,
 1652,,,,
-1653,,,,
+1653,119177,7.7,33,333193
 1654,,,,
 1655,,,,
 1656,,,,
@@ -1843,7 +1843,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 1842,,,,
 1843,,,,
 1844,,,,
-1845,,,,
+1845,120906,6.9,2,15629
 1846,,,,
 1847,,,,
 1848,,,,
@@ -2018,7 +2018,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2017,,,,
 2018,,,,
 2019,47478.0,8.6,38.0,379557.0
-2020,,,,
+2020,94947.0,7.5,8.0,76989.0
 2021,,,,
 2022,,,,
 2023,,,,
@@ -2148,7 +2148,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2147,,,,
 2148,,,,
 2149,,,,
-2150,,,,
+2150,80801.0,7.3,6.0,60909.0
 2151,,,,
 2152,,,,
 2153,,,,
@@ -2200,7 +2200,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2199,,,,
 2200,,,,
 2201,,,,
-2202,37017,7.6,3,32313
+2202,37017.0,7.6,3.0,32313.0
 2203,,,,
 2204,,,,
 2205,,,,
@@ -2789,7 +2789,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2788,66765.0,7.5,3.0,31967.0
 2789,,,,
 2790,,,,
-2791,80339,7.7,27,270729
+2791,80339.0,7.7,27.0,270729.0
 2792,,,,
 2793,,,,
 2794,,,,
@@ -2869,7 +2869,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2868,,,,
 2869,,,,
 2870,,,,
-2871,,,,
+2871,68473.0,7.6,12.0,123427.0
 2872,,,,
 2873,,,,
 2874,,,,
@@ -2919,7 +2919,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2918,,,,
 2919,,,,
 2920,,,,
-2921,,,,
+2921,68699,7.4,7,66790
 2922,,,,
 2923,,,,
 2924,,,,
@@ -2971,7 +2971,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 2970,,,,
 2971,,,,
 2972,,,,
-2973,,,,
+2973,97123.0,7.8,6.0,61749.0
 2974,,,,
 2975,,,,
 2976,,,,
@@ -3081,7 +3081,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 3080,,,,
 3081,,,,
 3082,,,,
-3083,185125,7.8,11,105813
+3083,185125.0,7.8,11.0,105813.0
 3084,,,,
 3085,,,,
 3086,,,,
@@ -3895,7 +3895,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 3894,,,,
 3895,,,,
 3896,,,,
-3897,,,,
+3897,181875.0,7.9,30.0,301464.0
 3898,,,,
 3899,,,,
 3900,,,,
@@ -5745,7 +5745,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 5744,,,,
 5745,,,,
 5746,,,,
-5747,82432,7.4,4,42962
+5747,82432.0,7.4,4.0,42962.0
 5748,,,,
 5749,,,,
 5750,,,,
@@ -6281,7 +6281,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 6280,,,,
 6281,,,,
 6282,,,,
-6283,,,,
+6283,275277,7.8,5,54951
 6284,,,,
 6285,,,,
 6286,,,,
@@ -6991,7 +6991,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 6990,,,,
 6991,,,,
 6992,,,,
-6993,,,,
+6993,91167,7.8,8,78537
 6994,,,,
 6995,,,,
 6996,,,,
@@ -7141,7 +7141,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 7140,,,,
 7141,,,,
 7142,,,,
-7143,325710,7.8,48,484686
+7143,325710.0,7.8,48.0,484686.0
 7144,,,,
 7145,,,,
 7146,,,,
@@ -7449,7 +7449,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 7448,,,,
 7449,,,,
 7450,,,,
-7451,,,,
+7451,377092.0,7.1,46.0,456196.0
 7452,,,,
 7453,,,,
 7454,,,,
@@ -8947,7 +8947,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 8946,,,,
 8947,,,,
 8948,,,,
-8949,,,,
+8949,375063,7.5,21,209622
 8950,,,,
 8951,,,,
 8952,,,,
@@ -48778,7 +48778,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 48777,,,,
 48778,,,,
 48779,,,,
-48780,482571,8.5,100,1496865
+48780,482571.0,8.5,100.0,1496865.0
 48781,,,,
 48782,,,,
 48783,,,,
@@ -51929,7 +51929,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 51928,,,,
 51929,,,,
 51930,,,,
-51931,,,,
+51931,490204.0,7.4,10.0,100759.0
 51932,,,,
 51933,,,,
 51934,,,,
@@ -64837,7 +64837,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 64836,,,,
 64837,,,,
 64838,,,,
-64839,1125849,7.9,32,324212
+64839,1125849.0,7.9,32.0,324212.0
 64840,,,,
 64841,,,,
 64842,,,,
@@ -69479,7 +69479,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 69478,,,,
 69479,,,,
 69480,,,,
-69481,887912,7.5,48,482016
+69481,887912.0,7.5,48.0,482016.0
 69482,,,,
 69483,,,,
 69484,,,,
@@ -89902,7 +89902,7 @@ movieId,imdbId,imdb_rating,normalized_popularity,raw_popularity
 89901,,,,
 89902,,,,
 89903,,,,
-89904,,,,
+89904,1655442.0,7.8,25.0,251407.0
 89905,,,,
 89906,,,,
 89907,,,,
