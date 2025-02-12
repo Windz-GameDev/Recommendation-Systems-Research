@@ -57,6 +57,17 @@ Our research has identified several areas for future improvement and expansion o
 
 These goals are designed to improve the system's performance, user satisfaction, and scalability, ensuring it remains a valuable tool for personalized movie recommendations.
 
+8.  Create a results table including the following data
+
+| Metric                       | KNN | SVD | SVD++ | SVD LLM | SVD++ LLM | KNN LLM |
+| ---------------------------- | --- | --- | ----- | ------- | --------- | ------- |
+| Hit Rate N@1                 |     |     |       |         |           |         |
+| Hit Rate N@5                 |     |     |       |         |           |         |
+| Hit Rate N@10                |     |     |       |         |           |         |
+| Cumulative Hit (>= 4.0) N@1  |     |     |       |         |           |         |
+| Cumulative Hit (>= 4.0) N@5  |     |     |       |         |           |         |
+| Cumulative Hit (>= 4.0) N@10 |     |     |       |         |           |         |
+
 ## Modes of Operation
 
 The recommendation system can be run in three different modes, each serving a specific purpose:
@@ -103,7 +114,7 @@ git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd Re
 2. Set up new Python environment using Conda and activate it. After, install core dependencies with the following command.
 
 ```bash
-conda install -c conda-forge scikit-surprise pandas numpy requests cinemagoer
+conda install -c conda-forge scikit-surprise pandas numpy requests cinemagoer tabulate
 ```
 
 3.  Set up the local LLM model:

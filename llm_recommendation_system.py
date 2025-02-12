@@ -1,99 +1,200 @@
-from surprise import Dataset, Reader, SVD, accuracy
+# Import core components from the Surprise library for collaborative filtering,
+# including dataset handling, rating scale processing, and the SVD algorithm.
+from surprise import Dataset, Reader, SVD, KNNBasic, SVDpp, accuracy
+from tabulate import tabulate # For displaying the results matrix
+
+# Import model selection utilities from Surprise for train-test splits and cross-validation.
 from surprise.model_selection import train_test_split, cross_validate
+
+# pandas is used for data manipulation and analysis (e.g., reading CSVs, merging DataFrames).
 import pandas as pd
 
-# Used for extracting similarity scores from LLM string responses
+# Regular expressions for extracting similarity scores or parsing strings in LLM responses.
 import re
 
-# Used for handling API requests to LLM
+# The requests library is used for handling HTTP API requests to the LLM service.
 import requests
 
-# This library proves a simple and  complete API for acccessing IMDB data
-from imdb import Cinemagoer, IMDbError 
+# The IMDbPY library (Cinemagoer) is used to access IMDb data for movies.
+from imdb import Cinemagoer, IMDbError
 
+# The math module is imported for additional mathematical operations (e.g., rounding, clamping).
 import math
 
+# The logging module is used to configure logging, such as suppressing noisy logs from IMDbPY.
 import logging
 
-# Set the logging level for the IMDbPY library
+# Configure logging for the IMDbPY library to suppress detailed output.
 logging.getLogger('imdbpy').setLevel(logging.ERROR)
 logging.getLogger('imdbpy').disabled = True
 
+# The time module provides functions to measure or delay execution (e.g., retry delays).
 import time
-import math
 
-# Used to select a random movie to drop for use as the test set when calculating hit rate
+# The random module is used to select a random movie rating to drop (leave-one-out testing).
 import random
+
+# argparse is used to parse command-line arguments for configuring running mode and dataset choices.
 import argparse
+
+# os is used for operating system interfaces such as file system operations (e.g., checking paths, creating directories).
 import os
 
-# Used for generating accurate movie release date preferences
+# datetime is used to handle and manipulate dates, such as determining movie release date ranges.
 import datetime
 
-def normalize_popularity_score(votes, max_rank=1000000):
+# The typing module provides support for type hints throughout the code.
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_000) -> int | None:
     """
-    Normalize IMDb vote count to a 0-100 scale.
-    
+    Convert raw vote counts to a standardized popularity score on a 0–100 scale using linear interpolation and banker's rounding.
+
+    The function computes a raw percentage as:
+      raw_percentage = 100 * (votes / max_rank)
+    indicating the proportion of the maximum expected vote count (max_rank). This raw percentage can exceed 100 
+    when votes are greater than max_rank. However, the function then applies banker's rounding and clamps the result
+    to ensure that the final popularity score is within the range 0 to 100. Essentially, any vote count that meets or
+    exceeds max_rank will yield a final score of 100.
+
     Parameters:
-    - votes (int/float): Number of votes from IMDb
-    - max_rank (int): Maximum expected number of votes (default: 1,000,000)
-    
+      votes (int | float | None):
+          The raw vote count for a movie. Only positive values are considered valid; if votes is None or non-positive, the function returns None.
+      
+      max_rank (int, default=1_000_000):
+          The threshold vote count corresponding to a maximum popularity score of 100. Vote counts equal to or greater 
+          than this value will result in a score of 100, while values below this threshold are scaled proportionally.
+
     Returns:
-    - int: Normalized popularity score from 0-100, where:
-        - 100 = extremely popular (votes >= max_rank)
-        - 0 = not popular (no votes)
-        - None if votes is None
+      int | None:
+          - Returns 100 if votes is greater than or equal to max_rank.
+          - Returns an integer between 0 and 99 if votes is positive but less than max_rank.
+          - Returns None if votes is None or non-positive.
+
+    Examples:
+      >>> normalize_popularity_score(1_250_000)
+      100
+      >>> normalize_popularity_score(750_000)
+      75
+      >>> normalize_popularity_score(123_456)
+      12
     """
+    # Validate input: Only positive vote counts are valid.
     if votes is None or votes <= 0:
         return None
-        
-    normalized = max(0, min(100, round(100 * (votes / max_rank))))
-    return normalized
+    
+    # Calculate the popularity ratio relative to the maximum rank.
+    popularity_ratio = votes / max_rank
+    
+    # Convert the ratio to a percentage scale.
+    raw_percentage = 100 * popularity_ratio
+    
+    # Apply banker's rounding (round-half-to-even) to obtain the nearest integer.
+    rounded_score = round(raw_percentage)
+    
+    # Clamp the result to ensure it doesn't exceed 100.
+    clamped_score = max(0, min(rounded_score, 100))
+    
+    return clamped_score
 
-def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format, 
-                                  descriptions_path, api_url, headers, preferences_path, scores_path, n=10, threshold=4.0, 
-                                  user_ids=None, use_llm=False, max_retries=5, delay_between_attempts=1, num_favorites=3):
-    '''
-    Calculate the cumulative hit rate of the recommendation algorithm using leave-one-out cross-validation.
+def calculate_cumulative_hit_rate(
+    algo: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    n: int = 10,
+    threshold: float = 4.0,
+    user_ids: Optional[List[Any]] = None,
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None
+) -> Tuple[float, Optional[float]]:
+    """
+    Calculate the cumulative hit rate of a movie recommendation system using leave-one-out cross-validation.
 
-    If user_ids is provided, the hit rate is calculated only for those users. If user_ids is None, the hit rate 
-    is calculated for all users.
+    This function evaluates a recommendation algorithm by testing if a movie that a user has rated 
+    highly (i.e., a rating greater than or equal to the specified threshold) appears in the top N 
+    recommendations when that movie is left out during training. In addition, when `use_llm` is True, 
+    the base recommendations are further refined using an LLM-based process that considers user preferences, 
+    movie descriptions, and popularity scores.
+
+    Cross-Validation Details:
+      - For each user (or for the subset provided in `user_ids`), one random rating (if the user has more than one)
+        is removed from the ratings DataFrame to form a test set.
+      - The algorithm is trained on the remaining ratings.
+      - A hit is counted if the left-out movie appears among the top N recommendations.
 
     Parameters:
-    - algo: The trained recommendation algorithm.
-    - ratings_dataframe: The dataframe containing all ratings.
-    - id_to_title: Dictionary mapping movieId to title.
-    - combined_dataframe: The dataframe containing movie information, including IMDb IDs.
-    - model_name: The name of the language model to use for generating descriptions.
-    - chat_format: The format string to structure the few-shot examples and movie title.
-    - descriptions_path: The path to the descriptions CSV file.
-    - api_url: The API endpoint URL to send the request to.
-    - headers: The headers to include in the API request.
-    - preferences_path: The path to the preferences CSV file.
-    - n: The number of top recommendations to consider for each user.
-    - threshold: The rating threshold to consider an item as relevant.
-    - user_ids: List of user IDs to calculate hit rate for, or None to calculate for all users.
-    - use_llm: Boolean flag to determine whether to use LLM-enhanced recommendations.
-    - max_retries: Maximum number of retries for fetching movie data.
-    - delay_between_attempts: Delay between retry attempts in seconds.
-    - num_favorites: The number of favorite movies to use for similarity score calculation.
+      algo (Any):
+          A trained recommendation algorithm from the Surprise library (e.g., an SVD instance) that implements 
+          a .fit(trainset) method and a .predict(user_id, movie_id) method.
+      ratings_dataframe (pd.DataFrame):
+          DataFrame containing all user ratings with at least the columns ['userId', 'movieId', 'rating'].
+      id_to_title (Dict[Any, str]):
+          A dictionary mapping each movie ID to its corresponding movie title.
+      combined_dataframe (pd.DataFrame):
+          DataFrame containing movie metadata (e.g., IMDb IDs) required for LLM processing.
+      model_name (str):
+          The name of the language model used for generating or refining movie descriptions.
+      chat_format (str):
+          A prompt format string for the LLM that outlines how few-shot examples and movie title are formatted.
+      descriptions_path (str):
+          File path to a CSV file containing pre-generated movie descriptions.
+      api_url (str):
+          The URL endpoint for processing movie descriptions via the LLM.
+      headers (Dict[str, str]):
+          A dictionary of HTTP headers for API requests (e.g., for authorization).
+      preferences_path (str):
+          File path to a CSV file containing user preferences (such as prioritizing high ratings or popularity).
+      scores_path (str):
+          File path to a CSV file containing movie scores (IMDb ratings, raw and normalized popularity).
+      n (int, default=10):
+          The number of top recommendations to consider for each test case.
+      threshold (float, default=4.0):
+          The minimum rating for a movie to be regarded as relevant when testing.
+      user_ids (Optional[List[Any]], default=None):
+          A list of specific user IDs to evaluate. If None, the evaluation is performed on all users.
+      use_llm (bool, default=False):
+          Flag indicating whether to apply LLM-based refinement on the base recommendations.
+      max_retries (int, default=5):
+          The maximum number of retries when fetching movie descriptions or related data via the API.
+      delay_between_attempts (int, default=1):
+          The number of seconds to wait between each retry attempt.
+      num_favorites (int, default=3):
+          The number of a user's favorite movies to consider when calculating similarity during LLM-enhanced refinement.
+      search_count (Optional[int], default=None):
+          The number of top recommendations to fetch initially from the base algorithm before LLM refinement.
+          If None, defaults to n * 10.  This allows controlling the size of the candidate set for LLM processing.
 
     Returns:
-    - hit_rate: The cumulative hit rate.
-    '''
-    # Create a copy of the ratings DataFrame which will have the test set ratings removed
+      Tuple[float, Optional[float]]:
+          A tuple containing:
+            - base_hit_rate (float): The fraction of test cases where the withheld movie appears in the top N recommendations 
+              using the base recommendation algorithm.
+            - llm_hit_rate (Optional[float]): The fraction for LLM-enhanced recommendations if use_llm is True; otherwise, None.
+    """
+    # Create a copy of the ratings DataFrame (this copy will have the test samples removed)
     ratings_dataframe_testset_removed = ratings_dataframe.copy()
-
-    # Initialize the leave-one-out test set
+    
+    # Initialize the leave-one-out test set list.
     loo_testset = []
 
-    # Get unique user IDs from the ratings dataset
+    # Determine unique users to evaluate; if user_ids is None, use all user IDs.
     if user_ids is None:
         unique_user_ids = ratings_dataframe_testset_removed['userId'].unique()
     else:
         unique_user_ids = user_ids
 
-    # Create the leave-one-out testset by removing one random rating for each user
+    # Create the leave-one-out test set by removing one random rating per user (if the user has >1 rating).
     for user_id in unique_user_ids:
         user_ratings = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
         if len(user_ratings) > 1:
@@ -102,130 +203,142 @@ def calculate_cumulative_hit_rate(algo, ratings_dataframe, id_to_title, combined
             loo_testset.append((user_id, test_rating['movieId'], test_rating['rating']))
             ratings_dataframe_testset_removed = ratings_dataframe_testset_removed.drop(user_ratings.index[test_rating_index])
     
-    # Define a Reader with the appropriate rating scale
+    # Define a Reader with the rating scale (0.5, 5.0)
     reader = Reader(rating_scale=(0.5, 5.0))
-
-    # Create the train set from the remaining ratings
+    
+    # Build the training set from the remaining ratings.
     data = Dataset.load_from_df(ratings_dataframe_testset_removed[['userId', 'movieId', 'rating']], reader)
     trainset = data.build_full_trainset()
-
-    # Train the algorithm on the trainset
+    
+    # Train the algorithm on the training set.
     algo.fit(trainset)
-
-    # Get a list of all movie IDs from the ratings dataset
+    
+    # Retrieve all movie IDs to serve as candidates for recommendations.
     all_movie_ids = ratings_dataframe['movieId'].unique()
-
-    # Initialize hit count
+    
+    # Initialize counters for base and LLM-enhanced hits, and the total number of relevant test cases.
     base_hit_count = 0
     llm_hit_count = 0 
     total_count = 0
-
-    # Load user preferences once for all users
-    max_user_id = ratings_dataframe['userId'].max()
-    preferences_df = load_user_preferences(preferences_path, max_user_id)
-
-    # Load movie scores for ratings/popularity
+    
+    # Load user preferences and movie scores (required for LLM-enhanced refinement).
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
     movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
-
-    # Iterate over each user in the leave-one-out test set
+    
+    # Evaluate each test case from the leave-one-out set.
     for user_id, movie_id, rating in loo_testset:
-
-        # Check if the left-out rating is about the threshold
+        # Only consider test cases where the rating meets the threshold.
         if rating >= threshold:
             total_count += 1
-
-            # Get top N recommendations for the user using the base algorithm
-            top_n_recommendations = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, id_to_title, n)
+            
+            # Base recommendations: Get top N recommendations for the user.
+            top_n_recommendations = get_top_n_recommendations(
+                algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, id_to_title, n
+            )
             recommended_movie_ids = [rec_movie_id for rec_movie_id, _, _ in top_n_recommendations]
-
-            # Check if the left-out movie is in the top N recommendations for the base algorithm
+            
+            # Count a base hit if the left-out movie appears in the recommendations.
             if movie_id in recommended_movie_ids:
                 base_hit_count += 1
-
-            ## LLM-enhanced recommendations
+            
+            # If using LLM-enhanced recommendations, proceed with further refinement.
             if use_llm:
 
-                # Get initial recommendations using SVD
-                top_n_times_x_for_user = get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, id_to_title, n*10)
+                # Determine the number of movies to fetch for LLM processing
+                num_movies_for_llm = search_count if search_count is not None else n * 10
 
-                # Get user's rating/popularity preferences
+                # Fetch an extended candidate set for further processing.
+                top_n_times_x_for_user = get_top_n_recommendations(
+                    algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, id_to_title, num_movies_for_llm
+                )
+                
+                # Retrieve user-specific preferences: ratings, popularity, the overall preference text, and date range.
                 prioritize_ratings = preferences_df.loc[preferences_df['userId'] == user_id, 'prioritize_ratings'].iloc[0]
                 prioritize_popular = preferences_df.loc[preferences_df['userId'] == user_id, 'prioritize_popular'].iloc[0]
-
-                # Get user preferences
                 user_preferences = preferences_df.loc[preferences_df['userId'] == user_id, 'preferences'].iloc[0]
-
-                # Get the user's date range
                 user_date_range = preferences_df.loc[preferences_df['userId'] == user_id, 'date_range'].iloc[0]
                 
-                # Get movie descriptions
-                movie_descriptions = get_movie_descriptions(top_n_times_x_for_user, combined_dataframe, model_name, chat_format,
-                                                            descriptions_path, scores_path, api_url, headers, max_retries, delay_between_attempts)
-
-                # Get the user's favorite movies
-                favorite_movie_titles = get_user_favorite_movies(user_id, ratings_dataframe_testset_removed, id_to_title, num_favorites=num_favorites)
-
-                # Find top N similar movies using LLM with rating/popularity preferences
-                top_n_similiar_movies = find_top_n_similar_movies(user_preferences, movie_descriptions,
-                                                               id_to_title, model_name, chat_format, n,
-                                                               api_url, headers, movie_scores_df,
-                                                               prioritize_ratings, prioritize_popular,
-                                                               favorite_movie_titles, num_favorites,
-                                                               date_range=user_date_range)
-
+                # Get movie descriptions via the LLM process.
+                movie_descriptions = get_movie_descriptions(
+                    top_n_times_x_for_user,
+                    combined_dataframe,
+                    model_name,
+                    chat_format,
+                    descriptions_path,
+                    scores_path,
+                    api_url,
+                    headers,
+                    max_retries,
+                    delay_between_attempts
+                )
+                
+                # Retrieve the user's favorite movies.
+                favorite_movie_titles = get_user_favorite_movies(
+                    user_id, ratings_dataframe_testset_removed, id_to_title, num_favorites=num_favorites
+                )
+                
+                # Use the LLM to select the top N movies most similar to the user's preferences.
+                top_n_similiar_movies = find_top_n_similar_movies(
+                    user_preferences,
+                    movie_descriptions,
+                    id_to_title,
+                    model_name,
+                    chat_format,
+                    n,
+                    api_url,
+                    headers,
+                    movie_scores_df,
+                    prioritize_ratings,
+                    prioritize_popular,
+                    favorite_movie_titles,
+                    num_favorites,
+                    date_range=user_date_range
+                )
                 llm_recommended_movie_ids = [rec_movie_id for rec_movie_id, _ in top_n_similiar_movies]
-
-                # Check if the left-out movie is in the top N recommendations for the LLM-enhanced algorithm
+                
+                # Count an LLM-enhanced hit if the left-out movie is among those recommendations.
                 if movie_id in llm_recommended_movie_ids:
                     llm_hit_count += 1
-
-    # Calculate hit rate
+    
+    # Calculate the hit rate for the base algorithm and, if applicable, for the LLM-enhanced version.
     base_hit_rate = base_hit_count / total_count if total_count > 0 else 0
-    llm_hit_rate = llm_hit_count / total_count if total_count > 0 else 0
-
+    llm_hit_rate = (llm_hit_count / total_count) if total_count > 0 else 0
+    
     return base_hit_rate, llm_hit_rate if use_llm else None
 
-def get_movie_scores(movie_id, imdb_id, movie_title):
+def load_movie_scores(scores_path: str, max_movie_id: int) -> pd.DataFrame:
     """
-    Get IMDb rating and popularity score for a movie/TV show.
-    """
-    ia = Cinemagoer()
+    Load movie scores from a CSV file and ensure that every movie ID from 1 to max_movie_id has an entry.
     
-    try:
-        movie = ia.get_movie(imdb_id)
-        if movie:
-            rating = movie.get('rating', None)
-            votes = movie.get('votes', None)
-            normalized_popularity = normalize_popularity_score(votes) if votes else None
-            
-            return rating, normalized_popularity, votes
-            
-    except IMDbError as e:
-        print(f"Failed to get scores for {movie_title}: {e}")
-        
-    return None, None, None
-
-def load_movie_scores(scores_path, max_movie_id):
-    """
-    Load movie scores from CSV, initializing new rows with None if needed.
+    This function attempts to read a CSV file at scores_path that contains movie scores and metadata.
+    If the file exists, it replaces any missing or placeholder values (such as empty strings, zeros,
+    or NaN values) with None. It then creates a complete DataFrame that contains every movie ID in the
+    range [1, max_movie_id], merging the existing data with newly initialized rows where data is missing.
+    If the file does not exist, it creates a new DataFrame with movieId values from 1 to max_movie_id and
+    initializes all other columns with None.
     
     Parameters:
-    - scores_path (str): Path to the scores CSV file
-    - max_movie_id (int): Maximum movie ID to accommodate
+      scores_path (str):
+          The file path to the CSV file containing movie scores.
+      max_movie_id (int):
+          The maximum MovieLens ID to accommodate. All movie IDs from 1 to this number will be present
+          in the returned DataFrame.
     
     Returns:
-    - pd.DataFrame: DataFrame containing:
-        - movieId: MovieLens ID of the movie 
-        - imdbId: IMDb ID (None if unknown)
-        - imdb_rating: IMDb rating 0-10 (None if unavailable)
-        - normalized_popularity: Popularity score 0-100 (None if unavailable)
-        - raw_popularity: Raw IMDb popularity rank (None if unavailable)
+      pd.DataFrame:
+          A DataFrame with the following columns:
+            - movieId: MovieLens ID (int)
+            - imdbId: IMDb ID (or None if unknown)
+            - imdb_rating: IMDb rating on a 0-10 scale (or None if unavailable)
+            - normalized_popularity: Popularity score scaled between 0 and 100 (or None if unavailable)
+            - raw_popularity: Raw IMDb popularity rank (or None if unavailable)
     """
     if os.path.exists(scores_path):
-        # Read the CSV file
+        # Read the CSV file containing movie score data.
         movie_scores = pd.read_csv(scores_path)
         
-        # Replace NaN, empty strings, and 0 values with None
+        # Replace placeholders and missing values with None.
         movie_scores = movie_scores.replace({
             '': None,
             0: None,
@@ -233,15 +346,16 @@ def load_movie_scores(scores_path, max_movie_id):
             float('nan'): None
         })
         
-        # Ensure all movie IDs from 1 to max_movie_id are present
+        # Create a DataFrame with all movie IDs from 1 to max_movie_id.
         all_movie_ids = pd.DataFrame({'movieId': range(1, max_movie_id + 1)})
+        
+        # Merge the full list of movie IDs with the loaded movie scores.
         complete_scores = pd.merge(all_movie_ids, movie_scores, on='movieId', how='left')
         
-        # Replace any remaining NaN values with None
+        # Replace any remaining NaN values with None.
         complete_scores = complete_scores.where(pd.notnull(complete_scores), None)
-        
     else:
-        # Create new DataFrame with all movie IDs and None values
+        # If the CSV does not exist, initialize a new DataFrame with all required columns set to None.
         complete_scores = pd.DataFrame({
             'movieId': range(1, max_movie_id + 1),
             'imdbId': [None] * max_movie_id,
@@ -252,13 +366,32 @@ def load_movie_scores(scores_path, max_movie_id):
     
     return complete_scores
 
-def save_movie_scores(scores_df, scores_path):
+def save_movie_scores(scores_df: pd.DataFrame, scores_path: str) -> None:
     """
-    Save movie scores to CSV file.
-    
+    Save movie scores DataFrame to a CSV file.
+
+    This function ensures that the directory for the provided file path exists (creating it if necessary) 
+    and then writes the DataFrame to a CSV file without including the DataFrame index. The movie scores 
+    DataFrame is expected to contain fields such as movie identifiers, IMDb ratings, normalized popularity 
+    scores, and raw popularity counts.
+
     Parameters:
-    - scores_df (pd.DataFrame): DataFrame containing movie scores
-    - scores_path (str): Path to save the CSV file
+      scores_df (pd.DataFrame): DataFrame containing movie scores. Expected columns include:
+                                - 'movieId': MovieLens ID for the movie.
+                                - 'imdbId': IMDb identifier.
+                                - 'imdb_rating': The IMDb rating (0-10).
+                                - 'normalized_popularity': Normalized popularity score (0-100).
+                                - 'raw_popularity': Raw vote/popularity count.
+      scores_path (str): The full file path (including the directory and file name) where the CSV file will be saved.
+
+    Returns:
+      None
+
+    Functionality:
+      - Ensures that the directory specified in scores_path exists by creating it if it does not.
+      - Saves the scores_df DataFrame to the specified path in CSV format without writing the DataFrame index.
+      - If an IOError or OSError occurs during directory creation or file writing, the error is caught and 
+        an error message is printed.
     """
     try:
         os.makedirs(os.path.dirname(scores_path), exist_ok=True)
@@ -266,16 +399,33 @@ def save_movie_scores(scores_df, scores_path):
     except (IOError, OSError) as e:
         print(f"Error saving movie scores: {e}")
 
-
-# Function to create mapping dictionaries between MovieLens Movie IDs and Movie titles
-def create_movie_mappings(movies_df):
+def create_movie_mappings(movies_df: pd.DataFrame) -> Tuple[Dict[Any, str], Dict[str, Any]]:
     """
-        Create mapping dictionaries between MovieLens Movie IDs and Movie titles.
+    Create mapping dictionaries between MovieLens movie IDs and movie titles.
 
-        Parameters:
-        - movies_df: DataFrame containing movie information with 'movieId' and 'title' columns.
+    This function expects a pandas DataFrame with at least the following two columns:
+      - 'movieId': A unique identifier for each movie (typically an integer).
+      - 'title': The title of the movie (a string).
 
-        Returns:
+    It returns:
+      - id_to_title: A dictionary mapping each movieId to its corresponding movie title.
+      - title_to_id: A dictionary mapping each movie title to its corresponding movieId.
+
+    Example:
+        Suppose movies_df contains:
+            movieId    title
+                1    Toy Story (1995)
+                2    Jumanji (1995)
+
+        Then,
+            id_to_title = {1: "Toy Story (1995)", 2: "Jumanji (1995)"}
+            title_to_id = {"Toy Story (1995)": 1, "Jumanji (1995)": 2}
+
+    Parameters:
+      movies_df (pd.DataFrame): DataFrame containing movie information with 'movieId' and 'title' columns.
+
+    Returns:
+      Tuple[Dict[Any, str], Dict[str, Any]]:
         - id_to_title: Dictionary mapping movieId to title.
         - title_to_id: Dictionary mapping title to movieId.
     """
@@ -287,148 +437,201 @@ def create_movie_mappings(movies_df):
 
     return id_to_title, title_to_id
 
-def create_id_mappings(links_df):
+def create_id_mappings(links_df: pd.DataFrame) -> Tuple[Dict[Any, Any], Dict[Any, Any]]:
     """
-    Create mapping dictionaries between MovieLens Movie IDs and IMDb IDs.
+    Create mapping dictionaries between MovieLens movie IDs and IMDb IDs.
 
-    Parameters: 
-    - links_df: DataFrame containing movie information with 'movieId' and 'imdbId' columns.
+    This function expects a pandas DataFrame that contains at least the following columns:
+      - 'movieId': A unique identifier for each movie in the MovieLens dataset (typically an integer).
+      - 'imdbId': The corresponding IMDb identifier for each movie (which may be represented as a string or numeric value).
+
+    It returns two dictionaries:
+      - movielens_to_imdb: A dictionary mapping each MovieLens movieId to its corresponding IMDb ID.
+      - imdb_to_movielens: A dictionary mapping each IMDb ID to its corresponding MovieLens movieId.
+
+    Example:
+        Given a DataFrame `links_df` as follows:
+           movieId    imdbId
+           1          0114709
+           2          0113497
+
+        The function will return:
+           movielens_to_imdb = {1: "0114709", 2: "0113497"}
+           imdb_to_movielens = {"0114709": 1, "0113497": 2}
+
+    Parameters:
+      links_df (pd.DataFrame): A DataFrame containing movie mapping information with columns 'movieId' and 'imdbId'.
 
     Returns:
-    - movielens_to_imdb: Dictionary mapping MovieLens movieId to IMDbId.
-    - imdb_to_movielens: Dictionary mapping IMDbId to MovieLens movieId.
+      Tuple[Dict[Any, Any], Dict[Any, Any]]:
+        - movielens_to_imdb: Dictionary mapping MovieLens movieId to IMDb ID.
+        - imdb_to_movielens: Dictionary mapping IMDb ID to MovieLens movieId.
     """
-
-    # Create a dictionary mapping MovieLens movieId to IMDbId
+    # Create a dictionary mapping MovieLens movieId to IMDb ID
     movielens_to_imdb = pd.Series(links_df.imdbId.values, index=links_df.movieId).to_dict()
 
-    # Create a dictionray mapping IMDbId to MovieLens movieId
+    # Create a dictionary mapping IMDb ID to MovieLens movieId
     imdb_to_movielens = pd.Series(links_df.movieId.values, index=links_df.imdbId).to_dict()
-    
+
     return movielens_to_imdb, imdb_to_movielens
 
-
-def evaluate_model(algo, testset, data):
+def get_top_n_recommendations(
+    algo: Any,
+    user_id: Any,
+    all_movie_ids: List[Any],
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    n: int = 10
+) -> List[Tuple[Any, str, float]]:
     """
-        Evaluate the performance of a recommendation algorithm.
+    Generate the top N movie recommendations for a given user.
 
-        Parameters:
-        - algo: The trained recommendation algorithm.
-        - testset: The test set for evaluating the algorithm.
-        - data: The full dataset for cross-validation.
-
-        Returns:
-        - None
-    """
-    print(f"Evaluating {algo} algorithm on the testset")
-    predictions = algo.test(testset)
-
-    # Compute and print RMSE
-    rmse = accuracy.rmse(predictions)
-    print("RMSE is a measure of the differences between predicted and actual ratings. "
-        "It gives higher weight to larger errors, making it sensitive to outliers.")
-
-    # Compute and print MAE
-    mae = accuracy.mae(predictions)
-    print("MAE is the average of the absolute differences between predicted and actual ratings. "
-        "It provides a straightforward measure of prediction accuracy.")
-
-    # Perform cross-validation
-    print("Performing cross-validation...")
-    cross_validate(algo, data, measures=['RMSE', 'MAE'], cv=5, verbose=True)
-
-def get_top_n_recommendations(algo, user_id, all_movie_ids, ratings_dataframe, id_to_title, n=10):
-    """
-    Get top N movie recommendations for a user.
+    This function works by:
+      1. Identifying the set of movie IDs that the user has already rated from the ratings_dataframe.
+      2. For each movie in all_movie_ids that the user has not rated, it uses the trained recommendation algorithm
+         (algo) to predict an estimated rating via its .predict(user_id, movie_id) method.
+      3. Sorting these predictions in descending order by the estimated rating value.
+      4. Returning the top N predictions as a list of tuples, where each tuple contains:
+         (movieId, movie title, estimated rating).
 
     Parameters:
-    - algo: The trained recommendation algorithm.
-    - user_id: The ID of the user for whom to generate recommendations.
-    - all_movie_ids: List of all movie IDs in the dataset.
-    - ratings_dataframe: The dataframe used to generate predictions. 
-    - id_to_title: Dictionary mapping movieId to title.
-    - n: Number of top recommendations to return.
+      algo (Any):
+          A trained recommendation algorithm (for example, an instance from the Surprise library) that implements a
+          .predict(user_id, movie_id) method returning an object with an attribute .est representing the estimated rating.
+      user_id (Any):
+          The identifier of the user (typically an int or str) for whom the recommendations are generated.
+      all_movie_ids (List[Any]):
+          A list of movie IDs available in the dataset. These IDs are typically integers or strings.
+      ratings_dataframe (pd.DataFrame):
+          A pandas DataFrame containing user ratings with at least the columns ['userId', 'movieId']. This is used to filter
+          out movies that the user has already rated.
+      id_to_title (Dict[Any, str]):
+          A dictionary that maps movie IDs to their corresponding movie titles. The keys are movie IDs and the values are strings.
+      n (int, default=10):
+          The number of top recommendations to return.
 
     Returns:
-    - top_n: List of tuples containing movie IDs and their estimated ratings.
+      List[Tuple[Any, str, float]]:
+          A list of up to n tuples where each tuple consists of:
+          - The movieId of the recommended movie.
+          - The movie title corresponding to the movieId (as obtained from id_to_title; if not found, defaults to "Unknown").
+          - The estimated rating (a float) predicted by the recommendation algorithm for that movie.
     """
-
-    # Get the set of movies the user has already rated (excluding the test set if called from the calculate hit rate function)
+    # Identify movies already rated by the user.
     rated_movies = set(ratings_dataframe[ratings_dataframe['userId'] == user_id]['movieId'])
-
-    # Predict ratings for all movies the user hasn't rated yet
+    
+    # For each movie the user hasn't rated, predict the rating using the recommendation algorithm.
     predictions = [algo.predict(user_id, movie_id) for movie_id in all_movie_ids if movie_id not in rated_movies]
-
-    # Sort the predictions by the estimated rating
+    
+    # Sort the predictions in descending order of their estimated ratings.
     predictions.sort(key=lambda x: x.est, reverse=True)
-
-    # Get the top N movie IDs and their estimated ratings
-    top_n = [(pred.iid, id_to_title[pred.iid], pred.est) for pred in predictions[:n]]
-
+    
+    # Create a list of tuples for the top n predictions:
+    # Each tuple contains (movieId, title, estimated rating)
+    top_n = [(pred.iid, id_to_title.get(pred.iid, "Unknown"), pred.est) for pred in predictions[:n]]
+    
     return top_n
 
-def retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, scores_path, url, headers, start_movie_id=1, max_retries=5, delay_between_attempts=1):
+def retrieve_all_descriptions(
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    scores_path: str,
+    url: str,
+    headers: dict,
+    start_movie_id: int = 1,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1
+) -> pd.DataFrame:
     """
-    Retrieves and caches movie descriptions and IMDb scores (ratings and popularity) for all movies in the dataset.
-    
-    This function processes each movie in the combined_dataframe to:
-    1. Check if description/scores exist in cache 
-    2. Fetch missing data from IMDb if needed
-    3. Generate descriptions via LLM if IMDb fetch fails
-    4. Normalize popularity scores to 0-100 scale
-    5. Save data to cache files periodically
+    Retrieve and cache movie descriptions and IMDb scores for all movies.
+
+    This function processes each movie in the combined_dataframe by performing the following steps:
+      1. Load existing cached scores and descriptions from local CSV files.
+      2. For each movie whose movieId is >= start_movie_id, check whether:
+         - The description is missing or empty.
+         - The IMDb rating (score) is missing.
+      3. If any data is missing, call the get_movie_with_retries() helper, which will:
+         - First try to fetch movie details from IMDb (including rating, votes, and plot).
+         - On failure, fall back to generating a description via an LLM using the provided model and prompt format.
+      4. If IMDb data is retrieved:
+         - Update the cached description by extracting the plot (or generating one via LLM if needed).
+         - Update the movie’s scores (IMDb rating, raw popularity, and normalized popularity, using normalize_popularity_score()).
+      5. If no IMDb data is retrieved and the description is missing, generate a description with few-shot LLM.
+      6. Periodically (every 100 movies processed) save the current cached descriptions and scores to their respective CSV files.
+      7. At the end, perform a final save and return the updated descriptions DataFrame.
 
     Parameters:
-    - combined_dataframe (pd.DataFrame): DataFrame containing movie metadata including IMDb IDs
-    - model_name (str): Name of LLM model for generating descriptions
-    - chat_format (str): Format string for LLM prompts 
-    - descriptions_path (str): Path to descriptions cache CSV file
-    - scores_path (str): Path to IMDb scores cache CSV file
-    - url (str): LLM API endpoint URL  
-    - headers (dict): HTTP headers for API requests
-    - start_movie_id (int): Movie ID to start processing from (default: 1)
-    - max_retries (int): Maximum retries for IMDb API calls (default: 5)
-    - delay_between_attempts (int): Delay in seconds between retries (default: 1)
+      combined_dataframe (pd.DataFrame):
+        DataFrame containing movie metadata (including columns such as 'movieId', 'title', and 'imdbId').
+      model_name (str):
+        Name of the language model to use for generating descriptions.
+      chat_format (str):
+        Prompt format string used by the LLM to generate few-shot descriptions.
+      descriptions_path (str):
+        File path to the descriptions cache CSV file.
+      scores_path (str):
+        File path to the IMDb scores cache CSV file.
+      url (str):
+        LLM API endpoint URL.
+      headers (dict):
+        HTTP headers for API requests.
+      start_movie_id (int, default=1):
+        Movie ID from which to start processing (allows resuming from a specific point).
+      max_retries (int, default=5):
+        Maximum number of retry attempts for API calls (for both IMDb and LLM requests).
+      delay_between_attempts (int, default=1):
+        Delay in seconds between retry attempts.
 
     Returns:
-    - pd.DataFrame: DataFrame containing all movie descriptions
+      pd.DataFrame:
+        A DataFrame containing all movie descriptions (updated cache).
 
     Notes:
-    - Saves descriptions and scores every 100 movies processed 
-    - Displays progress message every 10 seconds
-    - Uses IMDb API for scores and descriptions with fallback to LLM generation
-    - For ratings/popularity, uses None for missing values instead of 0
-    - Caches all data to avoid repeated API calls
-    - Handles both missing descriptions and scores independently
+      - Descriptions and scores are saved to cache files every 100 movies processed.
+      - A progress message is shown every 10 seconds
+      - For IMDb scores, missing values are represented as None rather than 0.
+      - Both missing descriptions and missing score data are handled independently.
+      - Cached data is used to avoid repeated API calls, improving efficiency.
+      - The function uses IMDb API (with get_movie_with_retries()) and, if needed, falls back to LLM generation.
     """
-    
-    # Load data
+    # Load the cached movie scores and cached descriptions from CSV files
     movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
     cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
     
-    # Track progress
+    # Track progress via timestamps
     last_print_time = time.time()
 
-    # Process each movie
+    # Process each row (movie) in the combined dataframe
     for index, row in combined_dataframe.iterrows():
+        current_time = time.time()
+        if current_time - last_print_time >= 10:
+            print(f"Processed {index+1} movies so far...")
+            last_print_time = current_time
+
         movie_id = row['movieId']
         if movie_id < start_movie_id:
             continue
-
-        # Check for missing data using explicit None check
+        
+        # Retrieve the existing description and IMDb rating from the cached DataFrames.
+        # Explicit check for missing description using empty string comparison.
         cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
         current_rating = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'].iloc[0]
         needs_scores = current_rating is None
 
-        # Get movie details if needed
+        # If the description is missing or the IMDb rating is missing, we attempt data retrieval.
         if cached_description == "" or needs_scores:
             movie_title = row['title']
             imdb_id = row['imdbId']
             
-            movie, rating, popularity = get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts)
+            # Call helper function that uses retries to fetch movie details (or generate data with fallback)
+            movie, rating, popularity = get_movie_with_retries(
+                imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts
+            )
             
             if movie:
-                # Update description if needed 
+                # Update the description if missing in cache:
                 if cached_description == "":
                     if 'plot' in movie:
                         description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
@@ -437,105 +640,509 @@ def retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descr
                     description = description.replace('\n', ' ').replace('\r', ' ').strip()
                     cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
 
-                # Update scores if needed
+                # Update IMDb scores if they are missing:
                 if needs_scores:
                     normalized_popularity = normalize_popularity_score(popularity) if popularity else None
-
                     movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'] = imdb_id
                     movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'] = rating if rating is not None else None
                     movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'] = normalized_popularity
                     movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'] = popularity if popularity is not None else None
             
+            # If no movie data could be retrieved and description is still missing, generate it via LLM.
             elif cached_description == "":
                 description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
                 description = description.replace('\n', ' ').replace('\r', ' ').strip()
                 cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
 
-        # Save periodically
+        # Save cached data every 100 movies processed
         if (index + 1) % 100 == 0:
             save_cached_descriptions(cached_descriptions, descriptions_path)
             save_movie_scores(movie_scores_df, scores_path)
 
-    # Final save
+    # Final save after processing all movies
     save_cached_descriptions(cached_descriptions, descriptions_path)
     save_movie_scores(movie_scores_df, scores_path)
 
     return cached_descriptions
 
-def generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers):
+def retrieve_all_descriptions(
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    scores_path: str,
+    url: str,
+    headers: dict,
+    start_movie_id: int = 1,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1
+) -> pd.DataFrame:
+    """
+    Retrieve and cache movie descriptions and IMDb scores for all movies.
+
+    This function processes each movie in the combined_dataframe by performing the following steps:
+      1. Load existing cached scores and descriptions from local CSV files.
+      2. For each movie with movieId >= start_movie_id, check whether:
+         - The description is missing or empty.
+         - The IMDb rating is missing.
+         - EITHER the raw popularity OR the normalized popularity score is missing.
+            (Both fields must be present in order to consider popularity data up-to-date.)
+      3. If any of the above data is missing, call the get_movie_with_retries() helper, which will:
+         - First attempt to fetch movie details from IMDb (including rating, votes, and plot).
+         - On failure, fall back to generating a description via an LLM using the provided model and prompt format.
+      4. If IMDb data is retrieved:
+         - Update the cached description by extracting the movie 'plot' (or by using an LLM if needed).
+         - Update the movie’s scores:
+             • Update the IMDb rating if it was missing.
+             • Update the raw popularity and calculate the normalized popularity using normalize_popularity_score()
+               if either popularity field was missing.
+      5. If no IMDb data is retrieved and a description is still missing, generate a description with an LLM.
+      6. Periodically (every 100 movies processed) save the current cached descriptions and scores to their respective CSV files.
+      7. Perform a final save after processing all movies and return the updated descriptions DataFrame.
+
+    Parameters:
+      combined_dataframe (pd.DataFrame):
+        DataFrame containing movie metadata (including columns such as 'movieId', 'title', and 'imdbId').
+      model_name (str):
+        Name of the language model to use for generating descriptions.
+      chat_format (str):
+        Prompt format string used by the LLM to generate few-shot descriptions.
+      descriptions_path (str):
+        File path to the descriptions cache CSV file.
+      scores_path (str):
+        File path to the IMDb scores cache CSV file.
+      url (str):
+        LLM API endpoint URL.
+      headers (dict):
+        HTTP headers for API requests.
+      start_movie_id (int, default=1):
+        Movie ID from which to start processing (allows resuming from a specific point).
+      max_retries (int, default=5):
+        Maximum number of retry attempts for API calls (for both IMDb and LLM requests).
+      delay_between_attempts (int, default=1):
+        Delay in seconds between retry attempts.
+
+    Returns:
+      pd.DataFrame:
+        A DataFrame containing all movie descriptions (updated cache).
+
+    Notes:
+      - Cached descriptions and scores are saved every 100 movies processed.
+      - A progress message is printed every 10 seconds.
+      - For IMDb scores, missing values are represented as None.
+      - Both missing descriptions and missing score data are handled independently.
+      - In the case of popularity data, the function now requires that both the raw popularity and the
+        normalized popularity fields exist. If either is None, the popularity data is considered outdated
+        and will be updated.
+      - The function uses cached data to avoid repeated API calls. It attempts to retrieve missing data via the
+        IMDb API (using get_movie_with_retries()) and falls back to LLM generation if necessary.
+    """
+    # Load the cached movie scores and cached descriptions from CSV files
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+    cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
+    
+    # Track progress using timestamps for periodic messages
+    last_print_time = time.time()
+
+    # Process each row (movie) in the combined dataframe
+    for index, row in combined_dataframe.iterrows():
+        current_time = time.time()
+        if current_time - last_print_time >= 10:
+            print(f"Processed {index+1} movies so far...")
+            last_print_time = current_time
+
+        movie_id = row['movieId']
+        if movie_id < start_movie_id:
+            continue
+        
+        # Retrieve cached description and IMDb rating/popularity
+        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
+        current_rating = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'].iloc[0]
+        current_raw_popularity = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'].iloc[0]
+        current_normalized = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'].iloc[0]
+        
+        # Check separately for missing IMDb rating and missing popularity data
+        needs_rating = current_rating is None
+        needs_popularity = (current_raw_popularity is None) or (current_normalized is None)
+
+        # If the description is missing or if either rating or popularity data is missing, attempt retrieval.
+        if cached_description == "" or needs_rating or needs_popularity:
+            movie_title = row['title']
+            imdb_id = row['imdbId']
+            
+            # Attempt to fetch movie details via a helper that implements retries,
+            # falling back on LLM generation if necessary.
+            movie, rating, popularity = get_movie_with_retries(
+                imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts
+            )
+            
+            if movie:
+                # If description is missing in the cache, update it.
+                if cached_description == "":
+                    if 'plot' in movie:
+                        description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
+                    else:
+                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                    description = description.replace('\n', ' ').replace('\r', ' ').strip()
+                    cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+
+                # Update IMDb rating if missing.
+                if needs_rating:
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'] = imdb_id
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'] = rating if rating is not None else None
+                
+                # Update popularity information if either raw or normalized popularity is missing.
+                if needs_popularity:
+                    normalized_popularity = normalize_popularity_score(popularity) if popularity else None
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'] = normalized_popularity
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'] = popularity if popularity is not None else None
+            
+            # If no IMDb data is retrieved and the description is still missing, generate a description with LLM.
+            elif cached_description == "":
+                description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                description = description.replace('\n', ' ').replace('\r', ' ').strip()
+                cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+
+        # Save cached data every 100 movies processed.
+        if (index + 1) % 100 == 0:
+            save_cached_descriptions(cached_descriptions, descriptions_path)
+            save_movie_scores(movie_scores_df, scores_path)
+
+    # Final save after processing all movies.
+    save_cached_descriptions(cached_descriptions, descriptions_path)
+    save_movie_scores(movie_scores_df, scores_path)
+
+    return cached_descriptions
+
+def retrieve_all_descriptions(
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    scores_path: str,
+    url: str,
+    headers: dict,
+    start_movie_id: int = 1,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1
+) -> pd.DataFrame:
+    """
+    Retrieve and cache movie descriptions and IMDb scores for all movies.
+
+    This function processes each movie in the combined_dataframe by performing the following steps:
+      1. Loads existing cached scores and descriptions from local CSV files.
+      2. For each movie with movieId >= start_movie_id, it checks whether:
+         - The description is missing or empty.
+         - The IMDb rating is missing.
+         - EITHER the raw popularity OR the normalized popularity score is missing 
+           (both fields must be non-None for popularity data to be considered complete).
+         - The cached IMDb ID is missing.
+      3. If any of the above data is missing, it calls the get_movie_with_retries() helper, which:
+         - Attempts to fetch movie details (including rating, votes, and plot) from IMDb.
+         - On failure, falls back to generating a description via an LLM using the provided model and prompt format.
+      4. If IMDb data is retrieved:
+         - Updates the cached description by extracting the movie’s 'plot' (or by using an LLM if necessary).
+         - Updates the movie’s scores:
+             • Sets the IMDb rating if it was missing.
+             • Sets the raw popularity, and calculates the normalized popularity using normalize_popularity_score() if either popularity field was missing.
+             • Sets the IMDb ID if it was missing.
+      5. If no IMDb data is retrieved and the description remains missing, it generates a description with an LLM.
+      6. The function saves the current cached descriptions and scores to their respective CSV files every 100 movies.
+      7. After processing all movies, it performs a final save and returns the updated descriptions DataFrame.
+
+    Parameters:
+      combined_dataframe (pd.DataFrame):
+        DataFrame containing movie metadata (including columns such as 'movieId', 'title', and 'imdbId').
+      model_name (str):
+        Name of the language model used for generating descriptions.
+      chat_format (str):
+        Prompt format string used by the LLM to generate few-shot descriptions.
+      descriptions_path (str):
+        File path to the descriptions cache CSV file.
+      scores_path (str):
+        File path to the IMDb scores cache CSV file.
+      url (str):
+        LLM API endpoint URL.
+      headers (dict):
+        HTTP headers for API requests.
+      start_movie_id (int, default=1):
+        Movie ID from which to start processing (allows resuming from a specific point).
+      max_retries (int, default=5):
+        Maximum number of retry attempts for API calls (for both IMDb and LLM requests).
+      delay_between_attempts (int, default=1):
+        Delay in seconds between retry attempts.
+
+    Returns:
+      pd.DataFrame:
+        A DataFrame containing all movie descriptions (updated cache).
+
+    Notes:
+      - Cached descriptions and scores are saved every 100 movies processed.
+      - A progress message is printed every 10 seconds.
+      - For IMDb scores, missing values are represented as None.
+      - Both missing descriptions and missing score data are handled independently.
+      - The function uses cached data to avoid repeated API calls; if data is missing,
+        it attempts to retrieve it via the IMDb API using get_movie_with_retries() and falls back to LLM generation if necessary.
+      - In this version, the check for popularity data now verifies that both raw and normalized popularity are present,
+        and the cached IMDb ID is checked separately so that it can be updated if missing.
+    """
+    # Load cached data from CSV files.
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+    cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
+    
+    # Track progress using timestamps for periodic messages.
+    last_print_time = time.time()
+
+    # Process each row (movie) in the combined dataframe.
+    for index, row in combined_dataframe.iterrows():
+        current_time = time.time()
+        if current_time - last_print_time >= 10:
+            print(f"Processed {index+1} movies so far...")
+            last_print_time = current_time
+
+        movie_id = row['movieId']
+        if movie_id < start_movie_id:
+            continue
+        
+        # Retrieve the cached description.
+        cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
+        
+        # Retrieve cached IMDb rating, raw popularity, and normalized popularity.
+        current_rating = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'].iloc[0]
+        current_raw_popularity = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'].iloc[0]
+        current_normalized = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'].iloc[0]
+        
+        # Retrieve the cached IMDb ID.
+        current_imdb_id = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'].iloc[0]
+        
+        # Check separately for missing IMDb rating, popularity, and IMDb ID.
+        needs_rating = current_rating is None
+        needs_popularity = (current_raw_popularity is None) or (current_normalized is None)
+        needs_imdb_id = current_imdb_id is None
+
+        # If description is missing or any of the rating/popularity/IMDb ID are missing, attempt retrieval.
+        if cached_description == "" or needs_rating or needs_popularity or needs_imdb_id:
+            movie_title = row['title']
+            imdb_id = row['imdbId']
+            
+            # Attempt to fetch movie details with retries.
+            movie, rating, popularity = get_movie_with_retries(
+                imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts
+            )
+            
+            if movie:
+                # Update description if missing.
+                if cached_description == "":
+                    if 'plot' in movie:
+                        description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
+                    else:
+                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                    description = description.replace('\n', ' ').replace('\r', ' ').strip()
+                    cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+
+                # Update IMDb ID if missing.
+                if needs_imdb_id:
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'] = imdb_id
+
+                # Update IMDb rating if missing.
+                if needs_rating:
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'] = rating if rating is not None else None
+                
+                # Update popularity information if either raw or normalized popularity is missing.
+                if needs_popularity:
+                    normalized_popularity = normalize_popularity_score(popularity) if popularity else None
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'] = normalized_popularity
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'] = popularity if popularity is not None else None
+            
+            # If no IMDb data could be retrieved and the description remains missing, generate a description via LLM.
+            elif cached_description == "":
+                description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                description = description.replace('\n', ' ').replace('\r', ' ').strip()
+                cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+
+        # Save cached data every 100 movies.
+        if (index + 1) % 100 == 0:
+            save_cached_descriptions(cached_descriptions, descriptions_path)
+            save_movie_scores(movie_scores_df, scores_path)
+
+    # Final save after processing all movies.
+    save_cached_descriptions(cached_descriptions, descriptions_path)
+    save_movie_scores(movie_scores_df, scores_path)
+
+    return cached_descriptions
+
+
+def generate_description_with_few_shot(
+    movie_title: str,
+    model_name: str,
+    chat_format: str,
+    url: str,
+    headers: Dict[str, str]
+) -> str:
     """
     Generate a movie description using few-shot prompting with a language model.
-    
+
+    This function constructs a prompt that includes a set of few-shot examples and a clear instruction,
+    then sends it to a language model API via a POST request. The chat format for the "Phi-3-mini-4k-instruct-q4.gguf"
+    model uses a single placeholder `{prompt}`, which is replaced with the concatenated few-shot examples
+    and the movie title.
+
     Parameters:
-    - movie_title (str): The title of the movie.
-    - model_name (str): The name of the model to use for generating the description.
-    - chat_format (str): The format string to structure the few-shot examples and movie title.
-    - url (str): The API endpoint URL to send the request to.
-    - headers (dict): The headers to include in the API request.
+      movie_title (str):
+          The title of the movie for which to generate a description.
+      model_name (str):
+          The name of the language model to use (e.g., "Phi-3-mini-4k-instruct-q4.gguf").
+      chat_format (str):
+          A format string that structures the prompt. It should include a placeholder `{prompt}`
+          where the concatenated few-shot examples and movie title will be inserted.
+      url (str):
+          The API endpoint URL to which the request is sent.
+      headers (dict):
+          A dictionary of HTTP headers (e.g., containing authorization) to include in the API request.
 
-    Returns: 
-    = str: The generated movie description.
+    Returns:
+      str:
+          The generated movie description as returned by the language model, with any leading/trailing
+          whitespace removed. If the API call fails (i.e., the response status code is not 200), the function
+          returns an empty string.
+
+    Example:
+        chat_format = (
+            "<|user|>\n{prompt} <|end|>\n<|assistant|>"
+        )
+        description = generate_description_with_few_shot(
+            movie_title="Interstellar",
+            model_name="Phi-3-mini-4k-instruct-q4.gguf",
+            chat_format=chat_format,
+            url="https://api.example.com/v1/chat",
+            headers={"Authorization": "Bearer YOUR_API_KEY"}
+        )
+    
+    The resulting prompt sent to the API will consist of:
+      - A system message that instructs the LLM to generate a concise movie description.
+      - A user message formatted using `chat_format`, embedding few-shot examples and instructions.
     """
-
+    # System instruction for the language model.
     role_instruction = (
-        "You are a helpful assistant that generates movie descriptions. "
-        "Do not use newlines in the description."
-        "The instructions and examples exist to help you understand the context, do not include them in your response. "
-        "End the response immediately after you finish your description and include nothing else."
+        "You are a helpful assistant that generates concise movie descriptions. "
+        "Do not use newlines in your response. The examples provided are for context only and should not appear in your output. "
+        "Return only the description."
     )
 
-    # Few-shot examples
+    # Check if using phi-4 model and wrap system content accordingly
+    if "phi-4-Q6_K" in model_name:
+        wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
+    else:
+        wrapped_system = role_instruction
+
+    # Few-shot examples defined within the function.
     few_shot_examples = (
-        "#### START EXAMPLES ####\n"
         "Example 1:\n"
         "Movie title: Inception\n"
-        "Description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.\n"
+        "Description: A thief who steals corporate secrets through dream-sharing technology is tasked with implanting an idea into a CEO's mind.\n"
         "Example 2:\n"
         "Movie title: The Matrix\n"
-        "Description: A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.\n"
-        "#### END EXAMPLES ####\n"
+        "Description: A computer hacker discovers his reality is an illusion and joins rebels to fight its controllers.\n"
+    )
+    
+    # Construct the prompt by embedding few-shot examples and instructions into `chat_format`.
+    prompt = chat_format.format(
+        prompt=few_shot_examples + "\nGenerate a description for this movie:\n" + f"Movie title: {movie_title}\nDescription:"
     )
 
-    # Format the prompt using the provided chat format 
-    prompt = chat_format.format(prompt=few_shot_examples + "Now, generate a description for the following movie without using newlines:\n" + f"Movie title: {movie_title}\nDescription:")
-
+    # Create the payload for the API request.
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": role_instruction},
+            {"role": "system", "content": wrapped_system},
             {"role": "user", "content": prompt}
         ],
         "max_tokens": 120,
         "temperature": 0
     }
 
+    # Send POST request to language model API.
     response = requests.post(url, headers=headers, json=payload)
+    
     if response.status_code == 200:
+        # Extract and return content from API response.
         return response.json().get("choices", [])[0].get("message", {}).get("content", "").strip()
     else:
+        # Return an empty string if API call fails.
         return ""
     
-def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_selection=False, results_limit=20, page_limit=5, fetch_full_details=False):
+def get_imdb_id_by_title(
+    title: str,
+    model_name: str,
+    chat_format: str,
+    url: str,
+    headers: Dict[str, str],
+    manual_selection: bool = False,
+    results_limit: int = 20,
+    page_limit: int = 5,
+    fetch_full_details: bool = False
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[float], Optional[int]]:
     """
-    Retrieve the IMDb ID for a movie given its title.
+    Retrieve the IMDb ID and additional movie details for a given movie title.
 
-    If manual_selection is True, the user will be asked to pick from the top few search results 
-    instead of letting the system do fuzzy matching automatically.
+    This function uses the Cinemagoer library to search for a movie by its title. It supports two modes:
+      - Manual selection: If `manual_selection` is True, the user is presented with a paginated list of results
+        and prompted to select the correct movie.
+      - Automatic matching: If `manual_selection` is False, the function attempts to find an exact title match.
+        If no exact match is found, it can optionally use fuzzy matching via an external LLM (e.g., phi model).
+
+    If `fetch_full_details` is True, the function retrieves additional information about the selected movie,
+    such as director, cover URL, IMDb rating, and popularity (vote count).
 
     Parameters:
-    - title (str): The title of the movie.
-    - model_name (str): The name of the model to use for generating the similarity score (currently used in existing fuzzy matching logic).
-    - chat_format (str): A format string to structure the user input and movie description.
-    - url (str): The API endpoint URL to send the request to.
-    - headers (dict): The headers to include in the API request.
-    - manual_selection (bool): Whether to prompt the user manually for a selection among the search results.
-    - results_limit (int): Maximum number of search results to display when manual_selection is True.
-    - page_limit (int): Maximum number of search results to display per page when manual_selection is True.
+      title (str):
+          The title of the movie to search for.
+      model_name (str):
+          The name of the language model to use for fuzzy matching (e.g., "Phi-3-mini-4k-instruct-q4.gguf").
+      chat_format (str):
+          A format string used to structure prompts for fuzzy matching with the language model.
+      url (str):
+          The API endpoint URL for sending requests to the language model.
+      headers (Dict[str, str]):
+          HTTP headers to include with API requests (e.g., authorization tokens).
+      manual_selection (bool, default=False):
+          Whether to prompt the user manually for selecting a movie from search results.
+      results_limit (int, default=20):
+          The maximum number of search results to retrieve from Cinemagoer.
+      page_limit (int, default=5):
+          The maximum number of search results displayed per page when manual selection is enabled.
+      fetch_full_details (bool, default=False):
+          Whether to fetch full movie details (e.g., director name, cover URL, IMDb rating) after selecting a movie.
 
     Returns:
-    - tuple: A tuple containing the IMDb ID of the movie (str), the director (str), the cover URL (str), and the IMDb title (str), or (None, None, None, None) if not found.
-    """
+      Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[float], Optional[int]]:
+        A tuple containing:
+          - imdb_id (str): The IMDb ID of the selected movie.
+          - director (str): The name(s) of the director(s) if full details are fetched; otherwise None.
+          - cover_url (str): The URL of the movie's cover image; defaults to None if unavailable.
+          - imdb_title (str): The title of the movie as returned by IMDb.
+          - imdb_rating (float): The IMDb rating if full details are fetched; otherwise 0.0.
+          - popularity (int): The number of votes or popularity metric if full details are fetched; otherwise 0.
 
+        If no match is found or an error occurs, all elements in the tuple will be None.
+
+    Example:
+        >>> imdb_id, director, cover_url, imdb_title, imdb_rating, popularity = get_imdb_id_by_title(
+        ...     "Inception",
+        ...     "Phi-3-mini-4k-instruct-q4.gguf",
+        ...     "<|user|>\n{prompt} <|end|>\n<|assistant|>",
+        ...     "https://api.example.com/v1/chat",
+        ...     {"Authorization": "Bearer YOUR_API_KEY"},
+        ...     manual_selection=False,
+        ...     fetch_full_details=True
+        ... )
+        >>> print(imdb_id)  # Outputs something like "1375666"
+
+    Notes:
+      - When manual_selection is enabled, users can navigate through paginated search results and select a match interactively.
+      - If no exact match is found and manual_selection is disabled, fuzzy matching can be employed using an external LLM.
+      - In case of an error or if no match is found, an error message is displayed and all return values are set to None.
+    """
     ia = Cinemagoer()
     try:
 
@@ -612,9 +1219,6 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
 
         # If using not using manual select, check for exact match
         for movie in search_results:
-
-            # Check if the result is a movie
-            # if movie.get('kind') == 'movie':
             
             # Check for an exact title match with case sensitivity
             if movie['title'] == title:
@@ -635,8 +1239,6 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
                     imdb_rating = 0.0
                     popularity = 0.0
                     
-
-
                 # print(f"Found exact match for '{title}': IMDb ID is {imdb_id}")
                 return imdb_id, director, cover_url, imdb_title, imdb_rating, popularity
                 
@@ -644,8 +1246,17 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
         best_match = None
         highest_similarity = -1  
 
+        role_instruction = ("You are a searching assistant that determines if a movie title matches what the user is looking for based on their input." 
+                            "You must only respond with numbers between 0 and 1 under any and all circumstances without any text, formatting, or markdown. 1 is a sure match, and 0 is certainly not a match.")
+
+        # Check if using phi-4 model and wrap system content accordingly
+        if "phi-4-Q6_K" in model_name:
+            wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
+        else:
+            wrapped_system = role_instruction
+
+        # Few-shot examples for the prompt
         few_shot_examples = (
-            "#### START EXAMPLES ####\n"
             "Example 1:\n"
             "User input: Avatar\n"
             "Movie title: Avatar: The Last Airbender\n"
@@ -661,10 +1272,10 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
             "Movie title: Robot Chicken: Star Wars\n"
             "How likely is it that this is the movie the user is looking for? (respond with a number between 0 and 1):\n"
             "0.2\n"
-            "#### END EXAMPLES ####\n"
         )
 
         for movie in search_results: 
+
             # if movie.get('kind') == 'movie':
             movie_title = movie['title']
 
@@ -680,26 +1291,43 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
             payload = {
                 "model": model_name,
                 "messages": [
-                    {"role": "system", "content": "You are a helpful assistant that determines if a movie title matches the user's input. You always only respond with numbers between 0 and 1."},
+                    {"role": "system", "content": wrapped_system},
                     {"role": "user", "content": full_prompt_formatted}
                 ],
                 "max_tokens": 5,
                 "temperature": 0
             }
+        
+            # Make 3 attempts to get a valid similarity score for a search result
+            max_score_attempts = 3
+            similarity_score = -1
 
-            response = requests.post(url, headers=headers, json=payload)
-            if response.status_code == 200:
-                content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
-                try:
-                    similarity_score = float(content)
-                    # print(f"Similarity score for '{movie_title}': {similarity_score}")
-                except ValueError: 
-                    print(f"Could not convert similarity score to float: {content}")
-                    similarity_score = -1 # Assign a default low similarity score
+            for attempt in range(max_score_attempts):
+                response = requests.post(url, headers=headers, json=payload)
+                if response.status_code == 200:
+                    content = response.json().get("choices", [])[0].get("message", {}).get("content", "0")
+                    try:
+                        # First try direct float conversion
+                        similarity_score = float(content)
+                        break  # Break if successful float conversion
+                    except ValueError:
+                        # If that fails, try to extract a number using regex
+                        match = re.search(r'-?\d+\.?\d*', content)
+                        if match:
+                            similarity_score = float(match.group())
+                            # Clamp the score between 0 and 1
+                            similarity_score = max(0, min(1, similarity_score))
+                            break  # Break if successful regex extraction
+                        else:
+                            print(f"Attempt {attempt + 1}: Could not extract similarity score for '{movie_title}' search result: {content}")
+                            if attempt == max_score_attempts - 1:
+                                print(f"All attempts failed for '{movie_title}' search result. Using default score for this result: -1")
+                                similarity_score = -1  # Default low similarity score
 
-                if similarity_score > highest_similarity:
-                    highest_similarity = similarity_score
-                    best_match = movie
+            # Update best match if this movie has a higher similarity score
+            if similarity_score > highest_similarity:
+                highest_similarity = similarity_score
+                best_match = movie       
             
         if best_match:
             imdb_id = best_match.movieID
@@ -711,14 +1339,13 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
                 director = ', '.join([person['name'] for person in full_movie.get('director', [])])
                 cover_url = full_movie.get('full-size cover url', full_movie.get('cover url', ''))
                 imdb_rating = full_movie.get('rating', 0.0)
-                popularity = full_movie.get('popularity', 0.0)                
+                popularity = full_movie.get('votes', 0.0)                
             else:
                 director = ''
                 cover_url = best_match.get('cover url', '')
                 imdb_rating = 0.0
                 popularity = 0.0
                 
-
             return imdb_id, director, cover_url, imdb_title, imdb_rating, popularity
         else:
             print(f"No match found for title in IMDb movies: {title}")
@@ -727,15 +1354,49 @@ def get_imdb_id_by_title(title, model_name, chat_format, url, headers, manual_se
         print(f"An error occured while searching for movie {title}'s IMDb ID: {e}")
         return None, None, None, None, None, None
 
-def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries=10, delay=1):
+def get_movie_with_retries(imdb_id: str | int, movie_title: str, model_name: str, chat_format: str, url: str, headers: dict, max_retries: int = 10, delay: int = 1) -> Tuple[Optional[dict], Optional[float], Optional[int]]:
     """
-    Attempts to retrieve movie/TV show data from IMDb with appropriate popularity metrics.
+    Attempts to fetch detailed movie or TV show data from IMDb, with support for partial data caching.
+    The function makes multiple attempts to retrieve complete movie data, but will preserve the best partial
+    data obtained across attempts if complete data cannot be fetched.
+
+    Each attempt tries to gather:
+    - Plot information from the movie object
+    - IMDb rating
+    - Vote count (as a measure of popularity)
+
+    If any attempt fails with a 404 error (indicating an outdated/incorrect IMDb ID), the function will:
+    1. Try to obtain an updated IMDb ID using get_imdb_id_by_title
+    2. Retry data retrieval with the new identifier
+    3. Continue this process until either complete data is retrieved or max retries reached
+
+    The function tracks the best partial data seen across all attempts, so even if complete data
+    cannot be retrieved, it returns the most complete information available.
+
+    Parameters:
+      imdb_id (str or int): The IMDb identifier for the movie
+      movie_title (str): The title of the movie; used for IMDb ID lookups on 404 errors
+      model_name (str): The language model name for fallback IMDb ID lookups
+      chat_format (str): The prompt format string for the language model
+      url (str): The API endpoint URL for LLM requests
+      headers (dict): HTTP headers for API requests
+      max_retries (int, optional): Maximum number of retry attempts (default: 10)
+      delay (int, optional): Seconds to wait between retries (default: 1)
+
+    Returns:
+      tuple: A tuple (movie, rating, popularity) containing:
+             - movie (dict): Best movie data object found, with plot if available
+             - rating (float or None): Best IMDb rating found, or None if unavailable
+             - popularity (int or None): Best vote count found, or None if unavailable
+
+             Returns partial data if complete data cannot be retrieved within max_retries.
+             Returns (None, None, None) only if no valid data could be retrieved.
     """
     ia = Cinemagoer()
     attempt = 0
-    movie = None
-    rating = None 
-    popularity = None
+    best_movie = None
+    best_rating = None 
+    best_popularity = None
 
     while attempt < max_retries:
         try:
@@ -743,11 +1404,22 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, h
             movie = ia.get_movie(imdb_id, info=['main', 'plot'])
             
             if movie:
-                rating = movie.get('rating', None)
-                popularity = movie.get('votes', None)
+                # Update best data if current attempt has more info
+                current_rating = movie.get('rating', None)
+                current_popularity = movie.get('votes', None)
+                has_plot = 'plot' in movie
+                
+                # Keep track of best data seen so far
+                if has_plot and best_movie is None:
+                    best_movie = movie
+                if current_rating is not None:
+                    best_rating = current_rating
+                if current_popularity is not None:
+                    best_popularity = current_popularity
                     
-                if 'plot' in movie:
-                    return movie, rating, popularity
+                # Return early if we have all data
+                if has_plot and current_rating is not None and current_popularity is not None:
+                    return movie, current_rating, current_popularity
                     
         except IMDbError as e:
             if 'HTTPError 404' in str(e):
@@ -755,7 +1427,7 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, h
                 imdb_id, _, _, _, _, _ = get_imdb_id_by_title(movie_title, model_name, chat_format, url, headers)
                 if not imdb_id:
                     print(f"Could not find the IMDb ID with the title '{movie_title}'.")
-                    return None, None, None
+                    return best_movie, best_rating, best_popularity
             else:
                 print(f"Attempt {attempt + 1} failed: {e}")
 
@@ -763,25 +1435,48 @@ def get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, h
         if attempt < max_retries:
             time.sleep(delay)
         
-    return None, None, None
+    return best_movie, best_rating, best_popularity
 
-def load_cached_descriptions(descriptions_path, max_movie_id):
+def load_cached_descriptions(descriptions_path: str, max_movie_id: int) -> pd.DataFrame:
     """
-    Loads movie descriptions from a CSV file and ensures all movie IDs from 1 to max_movie_id are present.
+    Loads and validates movie descriptions from a CSV file, ensuring continuous movie ID coverage.
 
-    This function attempts to load movie descriptions from a specified CSV file into a pandas DataFrame.
-    If the file exists, it reads the descriptions into the DataFrame. If the file does not exist, it
-    initializes a DataFrame with all movie IDs from 1 to max_movie_id, with empty strings as placeholders
-    for descriptions. This ensures that every movie ID has a corresponding entry, even if the description
-    is initially missing.
+    This function performs two main tasks:
+    1. Loads existing descriptions if the CSV file exists
+    2. Creates a new DataFrame with placeholder descriptions if the file doesn't exist
+
+    The function guarantees that:
+    - All movie IDs from 1 to max_movie_id are present
+    - No gaps exist in the ID sequence
+    - Missing descriptions are represented as empty strings
+    - The returned DataFrame has exactly two columns: 'movieId' and 'description'
 
     Parameters:
-    - descriptions_path (str): The path to the descriptions CSV file.
-    - max_movie_id (int): The maximum movie ID to ensure all IDs from 1 to this number have entries.
+        descriptions_path (str): 
+            File path to the CSV containing movie descriptions.
+            If the file exists, it must have at least 'movieId' and 'description' columns.
+        
+        max_movie_id (int): 
+            The highest movie ID to include in the DataFrame.
+            The function will create entries for all IDs from 1 to this number.
 
     Returns:
-    pandas.DataFrame: A DataFrame containing movie descriptions, with all movie IDs from 1 to max_movie_id
-    included. Descriptions are filled with empty strings where data is missing.
+        pd.DataFrame: A DataFrame with two columns:
+            - movieId (int): Sequential IDs from 1 to max_movie_id
+            - description (str): Movie descriptions, empty strings for missing data
+            
+            The DataFrame is guaranteed to:
+            - Have exactly max_movie_id rows
+            - Contain all IDs from 1 to max_movie_id
+            - Have no null values (NaN are converted to empty strings)
+
+    Example:
+        >>> df = load_cached_descriptions("descriptions.csv", 3)
+        >>> print(df)
+           movieId description
+        0       1           
+        1       2 A great movie
+        2       3           
     """
     if os.path.exists(descriptions_path):
         cached_descriptions = pd.read_csv(descriptions_path)
@@ -791,19 +1486,56 @@ def load_cached_descriptions(descriptions_path, max_movie_id):
         complete_cached_descriptions['description'] = complete_cached_descriptions['description'].fillna("")
     else:
         # Create a DataFrame with all movie IDs from 1 to max_movie_id
-        complete_cached_descriptions = pd.DataFrame({'movieId': range(1, max_movie_id + 1), 'description': [""] * max_movie_id})
+        complete_cached_descriptions = pd.DataFrame({
+            'movieId': range(1, max_movie_id + 1), 
+            'description': [""] * max_movie_id
+        })
 
     return complete_cached_descriptions
     
-def save_cached_descriptions(cached_descriptions, descriptions_path):
+def save_cached_descriptions(cached_descriptions: pd.DataFrame, descriptions_path: str) -> None:
     """
-    Saves the cached movie descriptions to a CSV file.
+    Saves movie descriptions to a CSV file with retry mechanism for handling file access conflicts.
 
+    This function attempts to save the movie descriptions DataFrame to a CSV file, implementing:
+    1. Directory creation if it doesn't exist
+    2. Multiple retry attempts if the file is locked/in use
+    3. User prompts to resolve file access conflicts
+    4. UTF-8 encoding to support special characters
+    
     Parameters:
-    - cached_descriptions (pandas.DataFrame): A DataFrame containing movie descriptions with
-      columns 'movieId' and 'description'. Each row represents a movie and its corresponding
-      description.
-    - descriptions_path (str): The path to the descriptions CSV file.
+        cached_descriptions (pd.DataFrame): 
+            DataFrame containing movie descriptions with required columns:
+            - movieId (int): Unique identifier for each movie
+            - description (str): Text description of the movie's plot/content
+            The DataFrame should not contain duplicate movieIds.
+            
+        descriptions_path (str): 
+            Full file path where the CSV will be saved.
+            If the directory structure doesn't exist, it will be created.
+
+    Returns:
+        None
+            Prints "File saved successfully." on success
+            Prints error messages and retry prompts on failure
+
+    Raises:
+        No exceptions are raised; all errors are handled internally with retries
+
+    Notes:
+        - Makes up to 10 retry attempts if file saving fails
+        - On each retry (except the last), prompts user to close conflicting applications
+        - Uses UTF-8 encoding to support international characters in descriptions
+        - Does not save the DataFrame index to the CSV file
+        - Creates any missing directories in the path automatically
+
+    Example:
+        >>> descriptions_df = pd.DataFrame({
+        ...     'movieId': [1, 2],
+        ...     'description': ['A great movie', 'Another great movie']
+        ... })
+        >>> save_cached_descriptions(descriptions_df, 'data/cached_descriptions.csv')
+        File saved successfully.
     """
     max_retries = 10
 
@@ -821,38 +1553,65 @@ def save_cached_descriptions(cached_descriptions, descriptions_path):
             else:
                 print("Failed to save the file after multiple attempts. Please ensure the file is not open in another application.")
 
-def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_format, descriptions_path, scores_path, url, headers, max_retries, delay_between_attempts):
+def get_movie_descriptions(
+    top_n_movies: List[Tuple[Any, str, float]], 
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str, 
+    scores_path: str,
+    url: str,
+    headers: Dict[str, str],
+    max_retries: int,
+    delay_between_attempts: int
+) -> Dict[Any, str]:
     """
-    Retrieves movie descriptions and scores for a list of top N movies using their IMDb IDs.
+    Retrieves and caches movie descriptions and IMDb metadata for a list of recommended movies.
 
-    This function attempts to retrieve both descriptions and scores (rating, popularity) for a given list of top N movies.
-    It first checks if data is available in the caches. If not, it tries to fetch the data from IMDb.
-    If the description is unavailable, it generates one using few-shot prompting with a language model.
-    All new data is cached for future use.
+    This function processes each movie in the top_n_movies list by:
+    1. Checking if description exists in cache
+    2. Checking if IMDb rating and popularity scores exist in cache
+    3. For missing data:
+       - Attempts to fetch from IMDb API
+       - Falls back to LLM-generated descriptions if IMDb fetch fails
+       - Updates caches with any new data retrieved
+    4. Returns a dictionary mapping movie IDs to their descriptions
 
     Parameters:
-    - top_n_movies (list): A list of tuples, each containing a movie ID, movie title, and estimated rating.
-    - combined_dataframe (pandas.DataFrame): A DataFrame containing movie information, including IMDb IDs.
-    - model_name (str): The name of the language model to use for generating descriptions.
-    - chat_format (str): The format string to structure the few-shot examples and movie title.
-    - descriptions_path (str): The path to the descriptions CSV file.
-    - scores_path (str): The path to the scores CSV file.
-    - url (str): The API endpoint URL to send the request to.
-    - headers (dict): The headers to include in the API request.
-    - max_retries (int): The maximum number of retry attempts for fetching movie data.
-    - delay_between_attempts (int): The delay in seconds between retry attempts.
-    
+        top_n_movies (List[Tuple[Any, str, float]]): 
+            List of tuples containing (movie_id, movie_title, estimated_rating) for recommended movies
+        combined_dataframe (pd.DataFrame):
+            DataFrame containing movie metadata with at least movieId and imdbId columns
+        model_name (str):
+            Name of language model for generating descriptions when IMDb fails
+        chat_format (str): 
+            Prompt template string for LLM description generation
+        descriptions_path (str):
+            File path to descriptions cache CSV file
+        scores_path (str):
+            File path to IMDb scores cache CSV file
+        url (str):
+            LLM API endpoint URL for description generation
+        headers (Dict[str, str]):
+            HTTP headers for LLM API requests
+        max_retries (int):
+            Maximum number of retry attempts for IMDb API calls
+        delay_between_attempts (int):
+            Seconds to wait between retry attempts
+
     Returns:
-    - descriptions (dict): A dictionary mapping movie IDs to their descriptions.
+        Dict[Any, str]:
+            Dictionary mapping movie IDs to their descriptions, using cached descriptions
+            when available and generating new ones as needed
 
     Notes:
-    - The function uses a caching mechanism to store and retrieve data, reducing the need
-      for repeated API calls or description generation.
-    - If a description is not found in the cache, the function attempts to retrieve it from IMDb.
-    - If the IMDb retrieval fails, a description is generated using the language model.
-    - New data is appended to the respective cache files for future use.
+        - Caches are loaded at start and saved after processing all movies
+        - Shows progress message every 10 seconds during processing
+        - Updates both description and score caches with new data
+        - Uses IMDb API first, falls back to LLM generation if needed
+        - Handles IMDb API errors with configurable retries
+        - Ensures descriptions are single-line by removing newlines
     """
-
     # Initialize an empty dictionary to store movie descriptions
     descriptions = {}
 
@@ -875,15 +1634,17 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
         # Check if we have a cached description
         cached_description = cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'].iloc[0]
         
-        # Get the current rating value
+        # Get the current values in movie scores df for the movie
         current_rating = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'].iloc[0]
+        current_raw = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'].iloc[0]
+        current_normalized = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'].iloc[0]
+        current_imdb_id = movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'].iloc[0]
 
-        # Get the IMDb ID for the current movie
+        # Get the IMDb ID for the current movie in combined df
         imdb_id = combined_dataframe.loc[combined_dataframe['movieId'] == movie_id, 'imdbId'].values[0]
         
-
         # If we need to fetch either description or scores, make the IMDb API call
-        if cached_description == "" or current_rating is None:
+        if cached_description == "" or current_rating is None or current_raw is None or current_normalized is None or current_imdb_id is None:
             movie, rating, votes = get_movie_with_retries(imdb_id, movie_title, model_name, chat_format, url, headers, max_retries, delay_between_attempts)
             
             if movie:
@@ -902,16 +1663,22 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
                     cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
                 else:
                     description = cached_description
-                        
+
+                # Make sure IMDB ID is the same in both dataframes
+                if current_imdb_id is None:
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'] = imdb_id  
+
                 # Update scores if rating is None
-                if current_rating is None:
-                    normalized_popularity = normalize_popularity_score(votes) if votes else None
-                    
-                    # Only update ratings and scores if they're valid
-                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdbId'] = imdb_id
-                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'] = rating 
-                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'] = normalized_popularity
-                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'] = votes
+                if current_rating is None and rating is not None:
+                    movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'imdb_rating'] = rating
+
+                # Update popularity information if either popularity measure is missing
+                if (current_raw is None or current_normalized is None) and votes is not None:
+                    normalized_popularity = normalize_popularity_score(votes)
+                    if current_raw is None:
+                        movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'raw_popularity'] = votes
+                    if current_normalized is None:
+                        movie_scores_df.loc[movie_scores_df['movieId'] == movie_id, 'normalized_popularity'] = normalized_popularity
             else:
                 # If movie data fetch failed but we need a description
                 if cached_description == "":
@@ -932,37 +1699,69 @@ def get_movie_descriptions(top_n_movies, combined_dataframe, model_name, chat_fo
 
     return descriptions
 
-def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model_name, chat_format, n, url, headers, 
-                            movie_scores_df=None, prioritize_ratings=False, prioritize_popular=False,
-                            favorite_movies=None, num_favorites=3, max_retries=3, date_range=None):
+def find_top_n_similar_movies(
+    user_input: str,
+    movie_descriptions: Dict[Any, str],
+    id_to_title: Dict[Any, str],
+    model_name: str,
+    chat_format: str,
+    n: int,
+    url: str,
+    headers: Dict[str, str],
+    movie_scores_df: Optional[pd.DataFrame] = None,
+    prioritize_ratings: bool = False,
+    prioritize_popular: bool = False,
+    favorite_movies: Optional[List[str]] = None,
+    num_favorites: int = 3,
+    max_retries: int = 3,
+    date_range: Optional[Tuple[int, int]] = None
+) -> List[Tuple[Any, float]]:
     """
-    Finds the top N most similar movies to the user's input from a dictionary mapping of movie ids to descriptions using a Large Language Model (LLM).
+    Finds the top N most similar movies to the user's input using a Large Language Model (LLM).
 
-    It constructs a prompt for the LLM using few-shot examples to guide the model in generating a similarity score for each movie. 
-    The function attempts to extract a similarity score from the LLM's response and convert it to a float. 
-    If that fails, the function uses a regular expression to extract a number from the LLM's response.
-    If there is no number in the response, it retries by generating another response. 
-    If no valid number is found after the specified number of max_retries, a default similarity score of 0.0 is used.
-    Once a similarity score has been calculated for each movie id in movie_descriptions dictionary, the function returns the top N movies with the highest similarity scores.
+    This function leverages an LLM to assess the similarity between a user's movie preferences
+    and a set of movie descriptions. It constructs a prompt for the LLM to guide the model 
+    in generating a similarity score for each movie.
 
     Parameters:
-    - user_input (str): A string describing the user's movie preferences.
-    - movie_descriptions (dict): A dictionary mapping movie IDs to their descriptions. Each description provides a brief overview of the movie's content.
-    - id_to_title (dict): A dictionary mapping movie IDs to their titles. This is used to include the movie title in the prompt for the LLM.
-    - model_name (str): The name of the LLM to use for generating similarity scores. This should correspond to a model available at the specified API endpoint.
-    - chat_format (str): A format string used to structure the prompt for the LLM. It should include a placeholder for the prompt content.
-    - n (int): The number of top similar movies to return.
-    - url (str): The API endpoint URL to send the request to.
-    - headers (dict): The headers to include in the API request.
-    - favorite_movies (list of str, optional): A list of the user's favorite movies to include in the prompt. Defaults to None.
-    - num_favorites (int, optional): The number of favorite movies to include in the prompt. Defaults to 3.
-    - max_retries (int, optional): The maximum number of retries to attempt if the LLM response cannot be converted to a float. Defaults to 3.
-    - date_range (tuple, optional): A tuple containing the start and end year of the user's preferred movie date range. Defaults to None.
+        user_input (str):
+            A string describing the user's movie preferences.
+        movie_descriptions (Dict[Any, str]):
+            A dictionary mapping movie IDs to their descriptions.
+        id_to_title (Dict[Any, str]):
+            A dictionary mapping movie IDs to their titles.
+        model_name (str):
+            The name of the LLM to use for generating similarity scores.
+        chat_format (str):
+            A format string used to structure the prompt for the LLM. It should include a placeholder for the prompt content.
+        n (int):
+            The number of top similar movies to return.
+        url (str):
+            The API endpoint URL to send the request to.
+        headers (Dict[str, str]):
+            The headers to include in the API request.
+        movie_scores_df (Optional[pd.DataFrame]):
+            An optional DataFrame containing movie scores (e.g., IMDb ratings, popularity).
+        prioritize_ratings (bool):
+            A boolean indicating whether to prioritize movies with high ratings.
+        prioritize_popular (bool):
+            A boolean indicating whether to prioritize popular movies.
+        favorite_movies (Optional[List[str]]):
+            An optional list of the user's favorite movie titles to include in the prompt.
+        num_favorites (int):
+            The number of favorite movies to include in the prompt.
+        max_retries (int):
+            The maximum number of retries to attempt if the LLM response cannot be converted to a float.
+        date_range (Optional[Tuple[int, int]]):
+            An optional tuple containing the start and end year of the user's preferred movie date range.
 
     Returns:
-    - top_n_movies (list of tuples): A list of tuples containing the movie ID and similarity score of the top N most similar movies.
+        List[Tuple[Any, float]]:
+            A list of tuples containing the movie ID and similarity score of the top N most similar movies.
+    Notes:
+        - Uses few-shot examples to guide the LLM in generating similarity scores. 
+        These examples provide the LLM with context on how to evaluate movie descriptions based on user preferences.
     """
-
     similarity_scores = []
 
     # Define the role and instructions with rating scale explanation
@@ -972,12 +1771,17 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         "Always respond with a number between -1.0 and 1.0, where:\n"
         "-1.0 means the movie goes completely against their preferences,\n"
         "0 means neutral or there isn't enough information,\n"
-        "1.0 is a perfect match."
+        "1.0 is a perfect match. You must respond with only the number, without any additional text or formatting under all circumstances.\n"
     )
+
+    # Check if using phi-4 model and wrap system content accordingly
+    if "phi-4-Q6_K" in model_name:
+        wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
+    else:
+        wrapped_system = role_instruction
 
     # Add example input and output to guide the LLM
     few_shot_examples = (
-        "#### START EXAMPLES ####\n"
         "Example 1:\n"
         "User input: I love science fiction with deep philosophical themes.\n"
         "User's favorite movies:\n"
@@ -1014,7 +1818,6 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         "Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.\n"
         "Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):\n"
         "-0.5\n"
-        "#### END EXAMPLES ####\n"
     )
 
     # Add favorite movies to the prompt if provided
@@ -1041,11 +1844,10 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
 
         # Build the prompt content with conditional rating/popularity lines
         prompt_content = (
-            "#### USER INPUT ####\n"
             f"User input: {user_input} "
             f"{'I prefer movies with high IMDb ratings. ' if prioritize_ratings else ''}"
             f"{'I prefer popular/trending movies.' if prioritize_popular else ''}\n"
-            f"{favorite_movies_prompt}"
+            f"{favorite_movies_prompt}\n"
             f"{date_range_prompt}\n"
             "New movie to evaluate:\n"
             f"Movie title: {movie_title}\n"
@@ -1072,7 +1874,7 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
         payload = {
             "model": model_name,  # Use passed model name
             "messages": [
-                {"role": "system", "content": role_instruction},
+                {"role": "system", "content": wrapped_system},
                 {"role": "user", "content": full_prompt}
             ],
             "max_tokens": 5,
@@ -1132,19 +1934,32 @@ def find_top_n_similar_movies(user_input, movie_descriptions, id_to_title, model
  
     return top_n_movies
 
-def get_user_favorite_movies(user_id, ratings_dataframe, id_to_title, num_favorites=3):
+def get_user_favorite_movies(
+    user_id: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    num_favorites: int = 3
+) -> List[str]:
     """
-    Retrieves a user's favorite movies based on their ratings in the `ratings_dataframe` by selecting the top `num_favorites` rated movies using the `nlargest` method.
+    Retrieves a user's favorite movie titles based on their ratings.
 
+    This function identifies the top N (`num_favorites`) movies rated by a given user
+    in the provided `ratings_dataframe` and returns a list of their titles
+    using the `id_to_title` mapping.
 
     Parameters:
-    - user_id (int): The ID of the user.
-    - ratings_dataframe (pandas.DataFrame): The DataFrame containing user ratings.
-    - id_to_title (dict): A dictionary mapping movie IDs to their titles.
-    - num_favorites (int): The number of favorite movies to retrieve (default is 3).
+        user_id (Any):
+            The ID of the user.
+        ratings_dataframe (pd.DataFrame):
+            The DataFrame containing user ratings with at least columns 'userId', 'movieId', and 'rating'.
+        id_to_title (Dict[Any, str]):
+            A dictionary mapping movie IDs to their titles.
+        num_favorites (int, optional):
+            The number of favorite movies to retrieve. Defaults to 3.
 
     Returns:
-    - list: A list of the user's favorite movie titles.
+        List[str]:
+            A list of the user's favorite movie titles.
     """
     user_ratings = ratings_dataframe[ratings_dataframe['userId'] == user_id]
     favorite_movies = user_ratings.nlargest(num_favorites, 'rating')['movieId'].tolist()
@@ -1176,9 +1991,14 @@ def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format
         "You should match the format of the user preferences responses in the examples exactly with nothing else in your response."
     )
 
+    # Check if using phi-4 model and wrap system content accordingly
+    if "phi-4-Q6_K" in model_name:
+        wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
+    else:
+        wrapped_system = role_instruction
+
     # Few-shot examples with real movies and aggregated preferences
     few_shot_examples = (
-        "#### START EXAMPLES ####\n"
         "Example 1:\n"
         "Movies:\n"
         "1. Movie title: The Shawshank Redemption\n"
@@ -1197,7 +2017,6 @@ def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format
         "   Description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.\n"
         "   User rating: 4.0\n"
         "User preferences: I love movies with mind-bending plots, action-packed sequences, and philosophical themes.\n"
-        "#### END EXAMPLES ####\n"
     )
 
     # Combine rated movie descriptions with titles and ratings
@@ -1212,7 +2031,7 @@ def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": role_instruction},
+            {"role": "system", "content": wrapped_system},
             {"role": "user", "content": prompt}
         ],
         "max_tokens": max_tokens,
@@ -1226,10 +2045,6 @@ def generate_preferences_from_rated_movies(rated_movies, model_name, chat_format
 
         # Post-process to ensure the summary is a single line
         summary = summary.replace('\n', ' ').replace('\r', ' ').strip()
-
-        # Further post-process to remove any unintended content
-        if "#### START EXAMPLES ####" in summary:
-            summary = summary.split("#### START EXAMPLES ####")[0].strip()
 
         return summary
     except requests.exceptions.RequestException as e:
@@ -1592,11 +2407,12 @@ def main():
         api_url = "http://localhost:5001/v1/chat/completions"
         headers = { "Content-Type": "application/json" }
         kobold_models = {
-            "Phi-3-mini-4k-instruct-q4.gguf": "<|user|>\n{prompt} <|end|>\n<|assistant|>"
+            "Phi-3-mini-4k-instruct-q4.gguf": "<|user|>\n{prompt} <|end|>\n<|assistant|>",
+            "phi-4-Q6_K": "<|im_start|>user<|im_sep|>{prompt}<|im_end|> <|im_start|>assistant<|im_sep|>"
         }
 
         # Get the desired locally hosted model
-        model_name = list(kobold_models.keys())[0] 
+        model_name = list(kobold_models.keys())[1] 
 
         # Get the corresponding chat format
         chat_format = kobold_models[model_name]
@@ -1682,7 +2498,7 @@ def main():
     # Ask how many users to add
     while True:
         try:
-            num_users = int(input("How many users would you like to add? (Enter 0 to calculate cumulative hit rate): "))
+            num_users = int(input("How many users would you like to add? (Enter 0 to calculate metrics on dataset): "))
             if num_users >= 0:
                 break
             else:
@@ -1705,7 +2521,7 @@ def main():
             while True:
                 try:
                     n = int(input("How many movies would you like to rate? (Minimum 3): "))
-                    if n >= 3:
+                    if n >= 1:
                         break
                     else:
                         print("Please enter a number greater than or equal to 3.")
@@ -1868,6 +2684,8 @@ def main():
             print("\nUser Preferences:")
             print(user_preferences)
             print(f"Preferred Release Date Range: {date_range[0]} - {date_range[1]}")
+            print(f"Prioritize High IMDb Ratings: {'Yes' if prioritize_ratings else 'No'}")
+            print(f"Prioritize Popular Movies: {'Yes' if prioritize_popular else 'No'}")
 
             # Create a temporary dataframe for the new preference
             new_preference = pd.DataFrame([{
@@ -1903,13 +2721,13 @@ def main():
         cumulative_hit_rate_svd_10, cumulative_hit_rate_llm_10 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
             descriptions_path, api_url, headers, preferences_path, scores_path, n=10, threshold=4.0, user_ids=new_user_ids, use_llm=True, 
-            num_favorites=num_favorites
+            num_favorites=num_favorites, search_count=100
         )
         
         '''
         cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
             algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-            descriptions_path, api_url, headers, preferences_path, scores_path, n=100, threshold=4.0, user_ids=new_user_ids, use_llm=True
+            descriptions_path, api_url, headers, preferences_path, scores_path, n=100, threshold=4.0, user_ids=new_user_ids, use_llm=True, search_count=1000
         )
         '''
         
@@ -1972,27 +2790,73 @@ def main():
                 movie_title = id_to_title[movie_id]
                 print(f"Movie Title: {movie_title}, Similarity Score: {score}")
     else:
-        # Create an SVD algorithm instance
-        algo = SVD()
 
-        # Proceed to calculate cumulative hit rates for all users
-        print("\nCalculating cumulative hit rates for all users...")
+        print("\nCalculating metrics for all algorithms...")
 
-        # Define the list of n values
-        n_values = [10, 15, 20, 100]
+        # Initialize algorithms
+        algorithms = {
+            'KNN': KNNBasic(),
+            'SVD': SVD(),
+            'SVD++': SVDpp()
+        }
 
-        # Number of favorites to use for similarity scoring
+        # Define metrics configuration
+        n_values = [1, 5, 10]
         num_favorites = 3
+        threshold = 4.0
 
-        # Loop over each n value
-        for n in n_values:
-            cumulative_hit_rate_svd, cumulative_hit_rate_llm = calculate_cumulative_hit_rate(
-                algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-                descriptions_path, api_url, headers, preferences_path, scores_path, n=n, threshold=4.0, user_ids=None, use_llm=True,
-                num_favorites=num_favorites
-            )
-            print(f"Cumulative Hit Rate for all users (SVD, threshold=4.0, n={n}): {cumulative_hit_rate_svd:.4f}")
-            print(f"Cumulative Hit Rate for all users (LLM-enhanced, threshold=4.0, n={n}): {cumulative_hit_rate_llm:.4f}")
+        # Initialize results matrix
+        results = {
+            'Metric': [
+                f'Hit Rate N@{n}' for n in n_values
+            ] + [
+                f'Cumulative Hit (>= {threshold}) N@{n}' for n in n_values
+            ]
+        }
+
+        # Calculate metrics for each algorithm
+        for algo_name, algo in algorithms.items():
+            print(f"\nProcessing {algo_name}...")
+            
+            # Initialize lists to store results for this algorithm
+            base_hit_rates = []
+            llm_hit_rates = []
+            base_cum_hit_rates = []
+            llm_cum_hit_rates = []
+
+            # Calculate metrics for each N value
+            for n in n_values:
+                # Calculate base and LLM-enhanced metrics (no threshold)
+                hit_rate, llm_hit_rate = calculate_cumulative_hit_rate(
+                    algo, ratings_dataframe, id_to_title, combined_dataframe,
+                    model_name, chat_format, descriptions_path, api_url, headers,
+                    preferences_path, scores_path, n=n, threshold=0.0,  # No threshold
+                    user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
+                )
+                base_hit_rates.append(f"{hit_rate:.4f}")
+                llm_hit_rates.append(f"{llm_hit_rate:.4f}")
+
+                # Calculate base and LLM-enhanced metrics (with threshold)
+                cum_hit_rate, llm_cum_hit_rate = calculate_cumulative_hit_rate(
+                    algo, ratings_dataframe, id_to_title, combined_dataframe,
+                    model_name, chat_format, descriptions_path, api_url, headers,
+                    preferences_path, scores_path, n=n, threshold=threshold,
+                    user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
+                )
+                base_cum_hit_rates.append(f"{cum_hit_rate:.4f}")
+                llm_cum_hit_rates.append(f"{llm_cum_hit_rate:.4f}")
+
+            # Add results to matrix
+            results[algo_name] = base_hit_rates + base_cum_hit_rates  # Regular hit rates + cumulative hit rates
+            results[f'{algo_name} LLM'] = llm_hit_rates + llm_cum_hit_rates  # LLM-enhanced versions
+
+        # Create and display the matrix using tabulate
+        headers = ['Metric', 'KNN', 'SVD', 'SVD++', 'KNN LLM', 'SVD LLM', 'SVD++ LLM']
+        table_data = [[metric] + [results[algo].get(i, '') for algo in headers[1:]] 
+                    for i, metric in enumerate(results['Metric'])]
+        
+        print("\nResults Matrix:")
+        print(tabulate(table_data, headers=headers, tablefmt='pipe', stralign='center'))
 
 if __name__ == "__main__":
     main()
