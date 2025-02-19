@@ -59,7 +59,8 @@ def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_
 
     Parameters:
       votes (int | float | None):
-          The raw vote count for a movie. Only positive values are considered valid; if votes is None or non-positive, the function returns None.
+          The raw vote count for a movie. Zero and positive values are considered valid;
+          if votes is None or negative, the function returns None.
       
       max_rank (int, default=1_000_000):
           The threshold vote count corresponding to a maximum popularity score of 100. Vote counts equal to or greater 
@@ -68,8 +69,9 @@ def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_
     Returns:
       int | None:
           - Returns 100 if votes is greater than or equal to max_rank.
+          - Returns 0 if votes is exactly 0.
           - Returns an integer between 0 and 99 if votes is positive but less than max_rank.
-          - Returns None if votes is None or non-positive.
+          - Returns None if votes is None or negative.
 
     Examples:
       >>> normalize_popularity_score(1_250_000)
@@ -78,9 +80,21 @@ def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_
       75
       >>> normalize_popularity_score(123_456)
       12
+      >>> normalize_popularity_score(0)
+      0
+      >>> normalize_popularity_score(None)
+      None
     """
-    # Validate input: Only positive vote counts are valid.
-    if votes is None or votes <= 0:
+    # Validate input: Only non-negative vote counts are valid
+    if votes is None:
+        return None
+
+    # Handle zero votes explicitly
+    if votes == 0:
+        return 0
+        
+    # Handle negative votes
+    if votes < 0:
         return None
     
     # Calculate the popularity ratio relative to the maximum rank.
@@ -312,11 +326,11 @@ def load_movie_scores(scores_path: str, max_movie_id: int) -> pd.DataFrame:
     Load movie scores from a CSV file and ensure that every movie ID from 1 to max_movie_id has an entry.
     
     This function attempts to read a CSV file at scores_path that contains movie scores and metadata.
-    If the file exists, it replaces any missing or placeholder values (such as empty strings, zeros,
-    or NaN values) with None. It then creates a complete DataFrame that contains every movie ID in the
-    range [1, max_movie_id], merging the existing data with newly initialized rows where data is missing.
-    If the file does not exist, it creates a new DataFrame with movieId values from 1 to max_movie_id and
-    initializes all other columns with None.
+    If the file exists, it replaces missing or placeholder values (empty strings and NaN values) with None,
+    preserving zero values as legitimate data. It then creates a complete DataFrame that contains every 
+    movie ID in the range [1, max_movie_id], merging the existing data with newly initialized rows where 
+    data is missing. If the file does not exist, it creates a new DataFrame with movieId values from 1 
+    to max_movie_id and initializes all other columns with None.
     
     Parameters:
       scores_path (str):
@@ -331,8 +345,13 @@ def load_movie_scores(scores_path: str, max_movie_id: int) -> pd.DataFrame:
             - movieId: MovieLens ID (int)
             - imdbId: IMDb ID (or None if unknown)
             - imdb_rating: IMDb rating on a 0-10 scale (or None if unavailable)
-            - normalized_popularity: Popularity score scaled between 0 and 100 (or None if unavailable)
-            - raw_popularity: Raw IMDb popularity rank (or None if unavailable)
+            - normalized_popularity: Popularity score scaled between 0 and 100 (preserving 0 as valid value)
+            - raw_popularity: Raw IMDb popularity rank (preserving 0 as valid value)
+
+    Notes:
+        - Zero values are preserved as legitimate data points, particularly important for popularity scores
+        - Empty strings and NaN values are converted to None
+        - Missing entries in the original CSV are filled with None values
     """
     if os.path.exists(scores_path):
         # Read the CSV file containing movie score data.
@@ -341,7 +360,6 @@ def load_movie_scores(scores_path: str, max_movie_id: int) -> pd.DataFrame:
         # Replace placeholders and missing values with None.
         movie_scores = movie_scores.replace({
             '': None,
-            0: None,
             'nan': None,
             float('nan'): None
         })
@@ -652,7 +670,7 @@ def retrieve_all_descriptions(
             elif cached_description == "":
                 description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
                 description = description.replace('\n', ' ').replace('\r', ' ').strip()
-                cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
+                cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'descri ption'] = description
 
         # Save cached data every 100 movies processed
         if (index + 1) % 100 == 0:
@@ -1896,7 +1914,8 @@ def find_top_n_similar_movies(
     # Add date range to the user input if provided
     date_range_prompt = ""
     if date_range:
-        date_range_prompt = f"Preferred Release Date Range: I prefer movies released between {date_range[0]} and {date_range[1]}."
+        start_year, end_year = eval(date_range) if isinstance(date_range, str) else date_range
+        date_range_prompt = f"Preferred Release Date Range: I prefer movies released between {start_year} and {end_year}."
 
     for movie_id, description in movie_descriptions.items():
 
@@ -2201,7 +2220,7 @@ def load_user_preferences(preferences_path: str, max_user_id: int) -> pd.DataFra
             * Ensures all user IDs from 1 to max_user_id are present
             * Fills missing preferences with empty strings
             * Initializes missing columns with None values
-            * Converts empty date_range strings to None
+            * Converts string representation of tuples (e.g., "(1990, 2020)") to actual tuples in date_range
             * Handles NaN values in boolean columns
         
         - If the CSV file doesn't exist:
@@ -2240,7 +2259,7 @@ def load_user_preferences(preferences_path: str, max_user_id: int) -> pd.DataFra
         if 'date_range' in complete_preferences_df.columns:
             complete_preferences_df['date_range'] = complete_preferences_df['date_range'].fillna(value="")
             complete_preferences_df['date_range'] = complete_preferences_df['date_range'].apply(
-                lambda x: None if x == "" else x
+                lambda x: None if x == "" else eval(x) if isinstance(x, str) else x
             )
         else:
             complete_preferences_df['date_range'] = None
@@ -3014,13 +3033,13 @@ def main():
     # Check for generate-data mode
     if args.mode == 'generate-data':
         # Retrieve all descriptions and get the updated DataFrame
-        cached_descriptions = retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, api_url, headers, args.start_movie_id)
+        cached_descriptions = retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, scores_path, api_url, headers, args.start_movie_id)
         
         # Merge descriptions into combined_dataframe
         combined_dataframe = combined_dataframe.merge(cached_descriptions, on='movieId', how='left')
         
         # Update the call to generate_all_user_preferences to use the updated combined_dataframe
-        generate_all_user_preferences(ratings_dataframe, combined_dataframe, movie_scores_df, model_name, chat_format, preferences_path, api_url, headers, movie_scores_df, args.start_user_id)
+        generate_all_user_preferences(ratings_dataframe, combined_dataframe, movie_scores_df, model_name, chat_format, preferences_path, api_url, headers, args.start_user_id)
         return
 
     # Ask how many users to add
@@ -3336,73 +3355,82 @@ def main():
                 movie_title = id_to_title[movie_id]
                 print(f"Movie Title: {movie_title}, Similarity Score: {score}")
     else:
+        # Where metrics calculation begins
+        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
 
         print("\nCalculating metrics for all algorithms...")
 
         # Initialize algorithms
         algorithms = {
             'KNN': KNNBasic(),
-            'SVD': SVD(),
+            'SVD': SVD(), 
             'SVD++': SVDpp()
         }
 
-        # Define metrics configuration
+        # Define metrics configuration  
         n_values = [1, 5, 10]
         num_favorites = 3
         threshold = 4.0
 
-        # Initialize results matrix
-        results = {
-            'Metric': [
-                f'Hit Rate N@{n}' for n in n_values
-            ] + [
-                f'Cumulative Hit (>= {threshold}) N@{n}' for n in n_values
-            ]
-        }
+        # Create DataFrame to store results
+        metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric', 'Value'])
 
         # Calculate metrics for each algorithm
         for algo_name, algo in algorithms.items():
             print(f"\nProcessing {algo_name}...")
             
-            # Initialize lists to store results for this algorithm
-            base_hit_rates = []
-            llm_hit_rates = []
-            base_cum_hit_rates = []
-            llm_cum_hit_rates = []
-
             # Calculate metrics for each N value
             for n in n_values:
                 # Calculate base and LLM-enhanced metrics (no threshold)
                 hit_rate, llm_hit_rate = calculate_cumulative_hit_rate(
                     algo, ratings_dataframe, id_to_title, combined_dataframe,
                     model_name, chat_format, descriptions_path, api_url, headers,
-                    preferences_path, scores_path, n=n, threshold=0.0,  # No threshold
+                    preferences_path, scores_path, n=n, threshold=0.0,
                     user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
                 )
-                base_hit_rates.append(f"{hit_rate:.4f}")
-                llm_hit_rates.append(f"{llm_hit_rate:.4f}")
+                
+                # Add base metrics to DataFrame 
+                metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                    'Algorithm': [algo_name, f'{algo_name} LLM'],
+                    'Metric': [f'Hit Rate N@{n}'] * 2,
+                    'Value': [hit_rate, llm_hit_rate]
+                })], ignore_index=True)
 
-                # Calculate base and LLM-enhanced metrics (with threshold)
+                # Calculate metrics with threshold
                 cum_hit_rate, llm_cum_hit_rate = calculate_cumulative_hit_rate(
                     algo, ratings_dataframe, id_to_title, combined_dataframe,
                     model_name, chat_format, descriptions_path, api_url, headers,
                     preferences_path, scores_path, n=n, threshold=threshold,
                     user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
                 )
-                base_cum_hit_rates.append(f"{cum_hit_rate:.4f}")
-                llm_cum_hit_rates.append(f"{llm_cum_hit_rate:.4f}")
+                
+                # Add threshold metrics to DataFrame
+                metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                    'Algorithm': [algo_name, f'{algo_name} LLM'],
+                    'Metric': [f'Cumulative Hit (>= {threshold}) N@{n}'] * 2, 
+                    'Value': [cum_hit_rate, llm_cum_hit_rate]
+                })], ignore_index=True)
 
-            # Add results to matrix
-            results[algo_name] = base_hit_rates + base_cum_hit_rates  # Regular hit rates + cumulative hit rates
-            results[f'{algo_name} LLM'] = llm_hit_rates + llm_cum_hit_rates  # LLM-enhanced versions
+                # Save after each calculation
+                metrics_df.to_csv(metrics_path, index=False)
 
-        # Create and display the matrix using tabulate
+        # Create pivot table for display
+        display_df = metrics_df.pivot(index='Metric', columns='Algorithm', values='Value')
         headers = ['Metric', 'KNN', 'SVD', 'SVD++', 'KNN LLM', 'SVD LLM', 'SVD++ LLM']
-        table_data = [[metric] + [results[algo].get(i, '') for algo in headers[1:]] 
-                    for i, metric in enumerate(results['Metric'])]
-        
+        table_data = [[metric] + [f"{display_df.loc[metric, algo]:.4f}" if metric in display_df.index and algo in display_df.columns else ''
+                                for algo in headers[1:]]
+                    for metric in metrics_df['Metric'].unique()]
+
         print("\nResults Matrix:")
         print(tabulate(table_data, headers=headers, tablefmt='pipe', stralign='center'))
+
+        # Save formatted table to text file
+        results_path = os.path.join(base_path, f'results_table_{current_time}.txt')
+        with open(results_path, 'w') as f:
+            f.write("Results Matrix:\n")
+            f.write(tabulate(table_data, headers=headers, tablefmt='pipe', stralign='center'))        
+        
 
 if __name__ == "__main__":
     main()
