@@ -111,6 +111,278 @@ def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_
     
     return clamped_score
 
+def calculate_hit_rates(
+    algo: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    n_values: List[int],
+    thresholds: List[float],
+    user_ids: Optional[List[Any]] = None,
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None
+) -> Dict[str, float]:
+    """
+    Calculate hit rates and cumulative hit rates efficiently using leave-one-out cross-validation.
+
+    This function evaluates recommendation algorithms by testing if highly-rated movies appear
+    in top N recommendations when left out during training. It processes each N value and
+    threshold in a single pass to avoid redundant calculations. When use_llm is True,
+    recommendations are refined using LLM-based processing that considers user preferences,
+    movie descriptions, and popularity scores.
+
+    Cross-Validation Process:
+    1. For each user (or specified subset):
+    - Removes one random rating from their ratings
+    - Trains algorithm on remaining ratings
+    - Gets recommendations once at maximum N value (or search_count if using LLM)
+    - Slices recommendations for different N values to avoid redundant calculations
+    - Optionally refines with LLM processing
+
+    Parameters:
+        algo (Any):
+            Trained recommendation algorithm implementing .fit(trainset) and 
+            .predict(user_id, movie_id) methods.
+        
+        ratings_dataframe (pd.DataFrame):
+            DataFrame with columns ['userId', 'movieId', 'rating'].
+        
+        id_to_title (Dict[Any, str]):
+            Maps movie IDs to titles.
+        
+        combined_dataframe (pd.DataFrame):
+            DataFrame with movie metadata including IMDb IDs.
+        
+        model_name (str):
+            Name of language model for LLM processing.
+        
+        chat_format (str):
+            Template for LLM prompts with {prompt} placeholder.
+        
+        descriptions_path (str):
+            Path to CSV with cached movie descriptions.
+        
+        api_url (str):
+            LLM API endpoint URL.
+        
+        headers (Dict[str, str]):
+            HTTP headers for API requests.
+        
+        preferences_path (str):
+            Path to CSV with user preferences.
+        
+        scores_path (str):
+            Path to CSV with IMDb scores and popularity.
+        
+        n_values (List[int]):
+            List of N values to evaluate (e.g., [1, 5, 10]).
+        
+        thresholds (List[float]):
+            Rating thresholds for cumulative hit rate calculation.
+            Example: [0.0, 4.0] for both regular and high-rating hits.
+        
+        user_ids (Optional[List[Any]], default=None):
+            Specific users to evaluate. None means all users.
+        
+        use_llm (bool, default=False):
+            Whether to apply LLM refinement to recommendations.
+        
+        max_retries (int, default=5):
+            Maximum API call attempts per operation.
+        
+        delay_between_attempts (int, default=1):
+            Seconds between retry attempts.
+        
+        num_favorites (int, default=3):
+            Number of favorite movies to use in LLM similarity calculation.
+        
+        search_count (Optional[int], default=None):
+            Initial recommendation pool size for LLM processing.
+            Defaults to max(n_values) * 10.
+
+    Returns:
+        Dict[str, float]: 
+            Dictionary of metrics with keys:
+            - "hit_rate_N@{n}": Base hit rate for each N value (using threshold=0.0)
+            - "hit_rate_N@{n}_LLM": LLM-enhanced hit rate for each N value (using threshold=0.0)
+            - "cumulative_hit_{threshold}_N@{n}": Base cumulative hit rate for each threshold>0 and N value
+            - "cumulative_hit_{threshold}_N@{n}_LLM": LLM-enhanced cumulative hit rate for each threshold>0 and N value
+            All values are floats between 0 and 1 representing successful recommendations divided by 
+            total cases where rating >= threshold. Here, rating refers to the ratings in the test set.
+
+    Example:
+        >>> metrics = calculate_hit_rates(
+        ...     algo=SVD(),
+        ...     ratings_dataframe=ratings_df,
+        ...     n_values=[1, 5, 10],
+        ...     thresholds=[0.0, 4.0],
+        ...     use_llm=True
+        ... )
+        >>> print(metrics["hit_rate_N@10"])  # Base hit rate at N=10
+        0.15
+        >>> print(metrics["cumulative_hit_4.0_N@5_LLM"])  # LLM rate, threshold=4.0, N=5
+        0.25
+
+    Notes:
+        - Processes each user's recommendations once at maximum N
+        - Calculates all metrics from single recommendation set
+        - Supports both regular hit rates (threshold=0) and cumulative
+        - LLM enhancement considers user preferences and movie metadata
+        - Each metric represents fraction of successful recommendations
+        - Handles leave-one-out test set creation and evaluation
+        - threshold_totals counts only test cases where rating >= threshold
+    """
+    # Create a copy of ratings DataFrame (will have test samples removed)
+    ratings_dataframe_testset_removed = ratings_dataframe.copy()
+    
+    # Get largest N value for initial recommendations
+    max_n = max(n_values)
+    
+    # Initialize results dictionary
+    results = {}
+    
+    # Initialize counters for total relevant cases per threshold
+    threshold_totals = {threshold: 0 for threshold in thresholds}
+    
+    # Initialize the leave-one-out test set
+    loo_testset = []
+
+    # Determine users to evaluate
+    if user_ids is None:
+        unique_user_ids = ratings_dataframe_testset_removed['userId'].unique()
+    else:
+        unique_user_ids = user_ids
+
+    # Create leave-one-out test set
+    for user_id in unique_user_ids:
+        user_ratings = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
+        if len(user_ratings) > 1:
+            test_rating_index = random.randint(0, len(user_ratings) - 1)
+            test_rating = user_ratings.iloc[test_rating_index]
+            loo_testset.append((user_id, test_rating['movieId'], test_rating['rating']))
+            ratings_dataframe_testset_removed = ratings_dataframe_testset_removed.drop(user_ratings.index[test_rating_index])
+
+    # Set up training data
+    reader = Reader(rating_scale=(0.5, 5.0))
+    data = Dataset.load_from_df(ratings_dataframe_testset_removed[['userId', 'movieId', 'rating']], reader)
+    trainset = data.build_full_trainset()
+    
+    # Train algorithm
+    algo.fit(trainset)
+    
+    # Get all movie IDs for recommendations
+    all_movie_ids = ratings_dataframe['movieId'].unique()
+    
+    # Load required dataframes for LLM processing
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+
+    # Process each test case
+    for user_id, movie_id, rating in loo_testset:
+
+        # Get recommendations at search_count or max_n depending on whether LLM is enabled
+        n_recs = search_count if (use_llm and search_count is not None) else max_n
+        if use_llm and search_count is None:
+            n_recs = max_n * 10
+
+        # Get recommendations once at appropriate N
+        top_n_recommendations = get_top_n_recommendations(
+            algo, user_id, all_movie_ids, ratings_dataframe_testset_removed, 
+            id_to_title, n_recs
+        )
+
+        # Get base recommended movies (slice if using LLM)
+        base_recommended_movies = [rec_movie_id for rec_movie_id, _, _ in top_n_recommendations[:max_n]]
+
+        # Handle LLM recommendations if enabled
+        llm_recommended_movies = None
+        if use_llm:
+            # Use existing recommendations for LLM processing
+            top_n_extended = top_n_recommendations
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get descriptions for candidate movies
+            descriptions = get_movie_descriptions(
+                top_n_extended, combined_dataframe, model_name, chat_format,
+                descriptions_path, scores_path, api_url, headers,
+                max_retries, delay_between_attempts
+            )
+            
+            # Get user's favorite movies
+            favorite_movies = get_user_favorite_movies(
+                user_id, ratings_dataframe_testset_removed, id_to_title, 
+                num_favorites=num_favorites
+            )
+            
+            # Get LLM-enhanced recommendations
+            llm_recommendations = find_top_n_similar_movies(
+                preferences_text, descriptions, id_to_title, model_name,
+                chat_format, max_n, api_url, headers, movie_scores_df,
+                prioritize_ratings=prioritize_ratings,
+                prioritize_popular=prioritize_popular,
+                favorite_movies=favorite_movies,
+                num_favorites=num_favorites,
+                date_range=date_range
+            )
+            llm_recommended_movies = [rec_id for rec_id, _ in llm_recommendations]
+
+        # Calculate metrics for each N value
+        for n in n_values:
+            # Get recommendations up to current N
+            base_recs_n = base_recommended_movies[:n]
+            llm_recs_n = llm_recommended_movies[:n] if llm_recommended_movies else None
+
+            # Calculate metrics for each threshold
+            for threshold in thresholds:
+                if rating >= threshold:
+                    # Increment total cases for this threshold
+                    threshold_totals[threshold] = threshold_totals[threshold] + 1
+                    
+                    # Update base hit count
+                    if movie_id in base_recs_n:
+                        metric_key = f"hit_rate_N@{n}" if threshold == 0.0 else f"cumulative_hit_{threshold}_N@{n}"
+                        results[metric_key] = results.get(metric_key, 0) + 1
+                    
+                    # Update LLM hit count if enabled
+                    if llm_recs_n and movie_id in llm_recs_n:
+                        metric_key = f"hit_rate_N@{n}_LLM" if threshold == 0.0 else f"cumulative_hit_{threshold}_N@{n}_LLM"
+                        results[metric_key] = results.get(metric_key, 0) + 1
+
+    # Inside calculate_hit_rates, after processing all test cases:
+    print("Threshold totals:", threshold_totals)
+    print("Results before conversion:", results)
+
+    # Convert counts to rates using appropriate totals for each threshold
+    rates = {}
+    for k, v in results.items():
+        # Extract threshold from metric key
+        if "cumulative_hit" in k:  # Cumulative hit rate
+            threshold = float(k.split('_')[2])
+        else:  # Regular hit rate
+            threshold = 0.0
+        
+        # Calculate rate using the correct total for this threshold
+        rates[k] = v / threshold_totals[threshold] if threshold_totals[threshold] > 0 else 0
+
+    return rates
+
 def calculate_cumulative_hit_rate(
     algo: Any,
     ratings_dataframe: pd.DataFrame,
@@ -3356,7 +3628,7 @@ def main():
                 print(f"Movie Title: {movie_title}, Similarity Score: {score}")
     else:
         # Where metrics calculation begins
-        current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
 
         print("\nCalculating metrics for all algorithms...")
@@ -3370,67 +3642,39 @@ def main():
 
         # Define metrics configuration  
         n_values = [1, 5, 10]
+        thresholds = [0.0, 4.0]  # 0.0 for regular hit rate, 4.0 for cumulative
         num_favorites = 3
-        threshold = 4.0
 
         # Create DataFrame to store results
         metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric', 'Value'])
 
-        # Calculate metrics for each algorithm
+        # Calculate all metrics in one pass
         for algo_name, algo in algorithms.items():
             print(f"\nProcessing {algo_name}...")
             
-            # Calculate metrics for each N value
-            for n in n_values:
-                # Calculate base and LLM-enhanced metrics (no threshold)
-                hit_rate, llm_hit_rate = calculate_cumulative_hit_rate(
-                    algo, ratings_dataframe, id_to_title, combined_dataframe,
-                    model_name, chat_format, descriptions_path, api_url, headers,
-                    preferences_path, scores_path, n=n, threshold=0.0,
-                    user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
-                )
-                
-                # Add base metrics to DataFrame 
+            metrics = calculate_hit_rates(
+                algo, ratings_dataframe, id_to_title, combined_dataframe,
+                model_name, chat_format, descriptions_path, api_url, headers,
+                preferences_path, scores_path, n_values=n_values, thresholds=thresholds,
+                user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
+            )
+            print(f"Metrics for {algo_name}:", metrics)
+            
+            # Add metrics to DataFrame
+            for metric_name, value in metrics.items():
+                is_llm = "_LLM" in metric_name
+                base_metric = metric_name.replace("_LLM", "")
                 metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                    'Algorithm': [algo_name, f'{algo_name} LLM'],
-                    'Metric': [f'Hit Rate N@{n}'] * 2,
-                    'Value': [hit_rate, llm_hit_rate]
+                    'Algorithm': [f'{algo_name} LLM' if is_llm else algo_name],
+                    'Metric': [base_metric],
+                    'Value': [value]
                 })], ignore_index=True)
 
-                # Calculate metrics with threshold
-                cum_hit_rate, llm_cum_hit_rate = calculate_cumulative_hit_rate(
-                    algo, ratings_dataframe, id_to_title, combined_dataframe,
-                    model_name, chat_format, descriptions_path, api_url, headers,
-                    preferences_path, scores_path, n=n, threshold=threshold,
-                    user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
-                )
-                
-                # Add threshold metrics to DataFrame
-                metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                    'Algorithm': [algo_name, f'{algo_name} LLM'],
-                    'Metric': [f'Cumulative Hit (>= {threshold}) N@{n}'] * 2, 
-                    'Value': [cum_hit_rate, llm_cum_hit_rate]
-                })], ignore_index=True)
+            print(f"DataFrame after {algo_name}:")  # Add this
+            print(metrics_df)  # Add this
 
-                # Save after each calculation
-                metrics_df.to_csv(metrics_path, index=False)
-
-        # Create pivot table for display
-        display_df = metrics_df.pivot(index='Metric', columns='Algorithm', values='Value')
-        headers = ['Metric', 'KNN', 'SVD', 'SVD++', 'KNN LLM', 'SVD LLM', 'SVD++ LLM']
-        table_data = [[metric] + [f"{display_df.loc[metric, algo]:.4f}" if metric in display_df.index and algo in display_df.columns else ''
-                                for algo in headers[1:]]
-                    for metric in metrics_df['Metric'].unique()]
-
-        print("\nResults Matrix:")
-        print(tabulate(table_data, headers=headers, tablefmt='pipe', stralign='center'))
-
-        # Save formatted table to text file
-        results_path = os.path.join(base_path, f'results_table_{current_time}.txt')
-        with open(results_path, 'w') as f:
-            f.write("Results Matrix:\n")
-            f.write(tabulate(table_data, headers=headers, tablefmt='pipe', stralign='center'))        
-        
+            # Save after each calculation with specified float format
+            metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
 
 if __name__ == "__main__":
     main()
