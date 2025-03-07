@@ -25,3 +25,9 @@ Datasets/Movie_Lens_Datasets/ml-latest-small/links.csv
 Datasets/Movie_Lens_Datasets/ml-32m/README.txt
 Datasets/Movie_Lens_Datasets/ml-latest-small/README.txt
 Datasets/Movie_Lens_Datasets/ml-32m/checksums.txt
+paper/main.tex
+paper/A_Survey_on_Large_Language_Models_for_Recommendation.pdf
+paper/readpdf.py
+paper/references.bib
+paper/A_Survey_on_Large_Language_Models_for_Recommendation.txt
+report.txt
