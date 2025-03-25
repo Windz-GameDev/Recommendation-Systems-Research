@@ -1,19 +1,7 @@
 # Ignore environment variables file
 .env
 
-# Ignore all files in the images folder
-images/*
-
-# Do not ignore the .gitignore file in the images folder
-!images/.gitignore
-
-# Ignore old Gemini code 
-old_gemini_code.py
-
-# Ignore Gemini Integration
-gemini_integration.py
-
-# Ignore datasets but keep cached descriptions
+# Ignore datasets but keep cached data
 Datasets/Movie_Lens_Datasets/ml-32m/tags.csv
 Datasets/Movie_Lens_Datasets/ml-32m/ratings.csv
 Datasets/Movie_Lens_Datasets/ml-32m/movies.csv
@@ -25,9 +13,9 @@ Datasets/Movie_Lens_Datasets/ml-latest-small/links.csv
 Datasets/Movie_Lens_Datasets/ml-32m/README.txt
 Datasets/Movie_Lens_Datasets/ml-latest-small/README.txt
 Datasets/Movie_Lens_Datasets/ml-32m/checksums.txt
-paper/main.tex
-paper/A_Survey_on_Large_Language_Models_for_Recommendation.pdf
-paper/readpdf.py
-paper/references.bib
-paper/A_Survey_on_Large_Language_Models_for_Recommendation.txt
-report.txt
+
+# Ignore all files in the flowchart folder
+flowchart/*
+
+# Ignore all files in the papers folder
+paper/*

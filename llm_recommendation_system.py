@@ -46,6 +46,15 @@ import datetime
 # The typing module provides support for type hints throughout the code.
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+# Importing evaluation metrics from the recommenders library for model performance assessment.
+from recommenders.evaluation.python_evaluation import (
+    map_at_k, ndcg_at_k, precision_at_k, recall_at_k,
+    rmse, mae, rsquared, exp_var
+)
+
+# Import the stratified splitter from recommenders library
+from recommenders.datasets.python_splitters import python_stratified_split
+
 def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_000) -> int | None:
     """
     Convert raw vote counts to a standardized popularity score on a 0–100 scale using linear interpolation and banker's rounding.
@@ -110,6 +119,786 @@ def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_
     clamped_score = max(0, min(rounded_score, 100))
     
     return clamped_score
+
+def evaluate_ranking_metrics_with_train_test_split(
+    algo: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    top_k_values: List[int],
+    test_size: float = 0.25,
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None
+) -> Dict[str, float]:
+    """
+    Evaluate recommendation algorithm using a train-test split and calculate ranking performance metrics.
+    
+    This function evaluates a recommendation algorithm by:
+    1. Splitting ratings data into training and test sets
+    2. Training the algorithm on the training set
+    3. Generating predictions for all movies the user hasn't seen (not just those in the test set)
+    4. Optionally enhancing predictions using an LLM
+    5. Calculating ranking performance metrics at different K values
+    
+    Both basic collaborative filtering and LLM-enhanced recommendation approaches are evaluated
+    using the same test set, enabling direct comparison of their effectiveness.
+    
+    Parameters:
+        algo (Any):
+            A recommendation algorithm from the Surprise library that implements
+            .fit() and .predict() methods (e.g., SVD, KNNBasic, SVDpp).
+            
+        ratings_dataframe (pd.DataFrame):
+            DataFrame containing user ratings with at least the columns:
+            - 'userId': User identifier
+            - 'movieId': Movie identifier
+            - 'rating': User's rating (typically 0.5-5.0)
+            
+        id_to_title (Dict[Any, str]):
+            Dictionary mapping movie IDs to their titles.
+            
+        combined_dataframe (pd.DataFrame):
+            DataFrame containing movie metadata with at least:
+            - 'movieId': Movie identifier
+            - Other metadata used for movie descriptions
+            
+        model_name (str):
+            Name of the language model for generating/processing descriptions.
+            
+        chat_format (str):
+            Template string for structuring LLM prompts.
+            
+        descriptions_path (str):
+            File path to cached movie descriptions CSV.
+            
+        api_url (str):
+            API endpoint URL for the language model.
+            
+        headers (Dict[str, str]):
+            HTTP headers for LLM API requests.
+            
+        preferences_path (str):
+            File path to user preferences CSV.
+            
+        scores_path (str):
+            File path to movie scores CSV (IMDb ratings, popularity).
+            
+        top_k_values (List[int]):
+            List of K values for calculating top-K metrics (e.g., [5, 10, 20]).
+            
+        test_size (float, default=0.25):
+            Proportion of data to use for testing (0.0-1.0).
+            
+        use_llm (bool, default=False):
+            Whether to enhance recommendations using LLM.
+            
+        max_retries (int, default=5):
+            Maximum number of retry attempts for API calls.
+            
+        delay_between_attempts (int, default=1):
+            Delay in seconds between retry attempts.
+            
+        num_favorites (int, default=3):
+            Number of favorite movies to use when calculating LLM similarity.
+            
+        search_count (Optional[int], default=None):
+            Number of candidates to consider for LLM refinement.
+            If None, defaults to 100. Larger counts may improve recommendation
+            quality at the cost of increased processing time.           
+    
+    Returns:
+        Dict[str, float]:
+            Dictionary mapping metric names to their values:
+            
+            Ranking metrics:
+            - "ndcg@k": NDCG metric at k for base algorithm
+            - "map@k": MAP metric at k for base algorithm
+            - "precision@k": Precision at k for base algorithm
+            - "recall@k": Recall at k for base algorithm
+
+            Each ranking metric is a float between 0.0 and 1.0, where higher is better.
+            
+            When use_llm=True, also includes LLM-enhanced versions:
+            - "ndcg@k_LLM": NDCG metric at k for LLM-enhanced
+            - "map@k_LLM": MAP metric at k for LLM-enhanced
+            - "precision@k_LLM": Precision at k for LLM-enhanced
+            - "recall@k_LLM": Recall at k for LLM-enhanced
+            
+    Performance Metrics Description:
+        - NDCG@k: Normalized Discounted Cumulative Gain
+          Measures ranking quality, giving higher weight to relevant items at top positions
+          
+        - MAP@k: Mean Average Precision
+          Measures average precision across multiple queries, considering position
+          
+        - Precision@k: Proportion of recommended items that are relevant
+          Measures recommendation accuracy without considering position
+          
+        - Recall@k: Proportion of relevant items that are recommended
+          Measures recommendation completeness
+    
+    Additional timing metrics:
+        - "time_total": Total execution time in seconds
+        - "time_train": Time to train the model in seconds
+        - "time_base_predictions": Time to generate base predictions in seconds
+        - "time_llm_predictions": Time to generate LLM predictions in seconds (if use_llm=True)
+        - "time_metrics_calculation": Time to calculate all metrics in seconds
+    """
+    # Start timing the entire process
+    total_start_time = time.time()
+
+    print(f"Starting ranking metric evaluation with {test_size*100:.0f}% test split...")
+    
+    # Initialize results dictionary
+    results = {}
+    timing_results = {}
+
+    # Apply stratified split based on items as in the benchmark
+    ratio = 1 - test_size
+    train_dataframe, test_dataframe = python_stratified_split(
+        ratings_dataframe,
+        ratio=ratio, 
+        min_rating=1, 
+        filter_by="item", 
+        col_user="userId", 
+        col_item="movieId"
+    )
+
+    print(f"Train set: {len(train_dataframe)} ratings, Test set: {len(test_dataframe)} ratings")
+    
+    # Set up rating scale for Surprise
+    reader = Reader(rating_scale=(0.5, 5.0))
+
+    # Convert train dataframe to Surprise format for training
+    train_data = Dataset.load_from_df(train_dataframe[['userId', 'movieId', 'rating']], reader)
+    trainset = train_data.build_full_trainset()
+    
+    # Start timing the training process
+    train_start_time = time.time()
+
+    print("Training the model...")
+
+    # Train the algorithm on the training set
+    algo.fit(trainset)
+
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_ranking"] = train_end_time - train_start_time
+    print(f"Model training completed in {timing_results['time_train_ranking']:.2f} seconds")
+        
+    # Get all unique user IDs in test set
+    test_user_ids = test_dataframe['userId'].unique()
+    
+    # Get all movie IDs
+    all_movie_ids = ratings_dataframe['movieId'].unique()
+    
+    # Load required dataframes for LLM processing
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+
+    # Start timing base predictions
+    base_pred_start_time = time.time()
+
+    print("Generating base predictions for all test users...")
+    base_predictions = []
+    
+    # For each user in the test set
+    for user_id in test_user_ids:
+        # Get the movies this user has rated in the training set
+        user_train_movies = train_dataframe[train_dataframe['userId'] == user_id]['movieId'].unique()
+        
+        # For each movie the user hasn't rated in the training set
+        for movie_id in all_movie_ids:
+            if movie_id in user_train_movies:
+                continue  # Skip if the user has already rated this in the training set
+            
+            # Try to generate a prediction
+            try:
+                if trainset.knows_user(trainset.to_inner_uid(user_id)) and trainset.knows_item(trainset.to_inner_iid(movie_id)):
+                    pred = algo.predict(user_id, movie_id).est
+                    base_predictions.append({
+                        'userId': user_id,
+                        'movieId': movie_id,
+                        'prediction': pred
+                    })
+            except Exception as e:
+                continue
+
+    # Convert base predictions to DataFrame
+    base_predictions_dataframe = pd.DataFrame(base_predictions)
+
+    # Ensure consistent data types between test and prediction dataframes
+    base_predictions_dataframe['userId'] = base_predictions_dataframe['userId'].astype(test_dataframe['userId'].dtype)
+    base_predictions_dataframe['movieId'] = base_predictions_dataframe['movieId'].astype(test_dataframe['movieId'].dtype)
+    
+    # Record base prediction time
+    base_pred_end_time = time.time()
+    timing_results["time_base_predictions_ranking"] = base_pred_end_time - base_pred_start_time
+    print(f"Base predictions completed in {timing_results['time_base_predictions_ranking']:.2f} seconds")
+
+    # Generate LLM predictions if enabled
+    llm_predictions_dataframe = None
+    if use_llm:
+        # Start timing LLM predictions
+        llm_pred_start_time = time.time()
+
+        print("Generating LLM-enhanced predictions...")
+        llm_predictions = []
+        
+        n_processed = 0
+        total_users = len(test_user_ids)
+        
+        for user_id in test_user_ids:
+            n_processed += 1
+            if n_processed % 10 == 0:
+                print(f"Processing user {n_processed}/{total_users}...")
+                
+            # Use base algorithm to get initial recommendations for LLM refinement
+            search_size = search_count if search_count is not None else 100
+            
+            # Get user's movies from the training set
+            user_train_movies = train_dataframe[train_dataframe['userId'] == user_id]['movieId'].unique()
+            
+            # Filter base predictions for this user
+            user_base_preds = base_predictions_dataframe[base_predictions_dataframe['userId'] == user_id]
+            
+            if user_base_preds.empty:
+                continue
+                
+            # Sort by predicted rating
+            user_base_preds = user_base_preds.sort_values('prediction', ascending=False)
+            
+            # Take the top search_size predictions
+            top_preds = user_base_preds.head(search_size)
+            
+            # Prepare candidate recommendations in the format expected by get_movie_descriptions
+            candidate_recommendations = []
+            for _, row in top_preds.iterrows():
+                movie_id = row['movieId']
+                prediction = row['prediction']
+                movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
+                candidate_recommendations.append((movie_id, movie_title, prediction))
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            if len(user_prefs) == 0:
+                continue
+                
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get movie descriptions
+            candidate_movie_descriptions = get_movie_descriptions(
+                candidate_recommendations, combined_dataframe, model_name, chat_format,
+                descriptions_path, scores_path, api_url, headers,
+                max_retries, delay_between_attempts
+            )
+            
+            # Get user's favorite movies from training set
+            favorite_movies = []
+            if len(train_dataframe[train_dataframe['userId'] == user_id]) > 0:
+                top_movies = train_dataframe[train_dataframe['userId'] == user_id].sort_values('rating', ascending=False).head(num_favorites)
+                for _, row in top_movies.iterrows():
+                    movie_title = id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}")
+                    favorite_movies.append((movie_title, row['rating']))
+            
+            # Get top K similar movies using LLM
+            top_k_llm_recommendations = find_top_n_similar_movies(
+                preferences_text, candidate_movie_descriptions, id_to_title, model_name,
+                chat_format, max(top_k_values), api_url, headers, movie_scores_df,
+                prioritize_ratings=prioritize_ratings,
+                prioritize_popular=prioritize_popular,
+                favorite_movies=favorite_movies,
+                num_favorites=num_favorites,
+                date_range=date_range
+            )
+            
+            # Create prediction entries for LLM recommendations
+            for movie_id, similarity in top_k_llm_recommendations:
+                # Assuming similarity is between -1 and 1, we map it to a 0.5-5.0 scale
+                normalized_score = 0.5 + ((similarity + 1) / 2) * 4.5
+                
+                llm_predictions.append({
+                    'userId': user_id,
+                    'movieId': movie_id,
+                    'prediction': normalized_score
+                })
+        
+        # Convert LLM predictions to DataFrame
+        if llm_predictions:
+            llm_predictions_dataframe = pd.DataFrame(llm_predictions)
+
+            # Ensure consistent data types between test and prediction dataframes
+            llm_predictions_dataframe['userId'] = llm_predictions_dataframe['userId'].astype(test_dataframe['userId'].dtype)
+            llm_predictions_dataframe['movieId'] = llm_predictions_dataframe['movieId'].astype(test_dataframe['movieId'].dtype)
+
+        # Record LLM prediction time
+        llm_pred_end_time = time.time()
+        timing_results["time_llm_predictions_ranking"] = llm_pred_end_time - llm_pred_start_time
+        print(f"LLM predictions completed in {timing_results['time_llm_predictions_ranking']:.2f} seconds")
+    
+    # Start timing metrics calculation
+    metrics_calc_start_time = time.time()
+
+    print("Calculating metrics...")
+
+    # Calculate ranking metrics for each K value using all predictions
+    for k in top_k_values:
+        # Base algorithm metrics
+        if not base_predictions_dataframe.empty:
+            # NDCG@N - use all predictions for ranking metrics
+            ndcg = ndcg_at_k(test_dataframe, base_predictions_dataframe, 
+                             col_user="userId", col_item="movieId", 
+                             col_rating="rating", col_prediction="prediction", k=k)
+            results[f"ndcg@{k}"] = ndcg
+            
+            # MAP@N
+            map_score = map_at_k(test_dataframe, base_predictions_dataframe, 
+                                col_user="userId", col_item="movieId", 
+                                col_rating="rating", col_prediction="prediction", k=k)
+            results[f"map@{k}"] = map_score
+            
+            # Precision@N
+            precision = precision_at_k(test_dataframe, base_predictions_dataframe, 
+                                     col_user="userId", col_item="movieId", 
+                                     col_rating="rating", col_prediction="prediction", k=k)
+            results[f"precision@{k}"] = precision
+            
+            # Recall@N
+            recall = recall_at_k(test_dataframe, base_predictions_dataframe, 
+                               col_user="userId", col_item="movieId", 
+                               col_rating="rating", col_prediction="prediction", k=k)
+            results[f"recall@{k}"] = recall
+            
+        # LLM metrics 
+        if use_llm and llm_predictions_dataframe is not None and not llm_predictions_dataframe.empty:
+            # NDCG@N for LLM - use all predictions for ranking metrics
+            ndcg_llm = ndcg_at_k(test_dataframe, llm_predictions_dataframe, 
+                    col_user="userId", col_item="movieId", 
+                    col_rating="rating", col_prediction="prediction", k=k)
+            results[f"ndcg@{k}_LLM"] = ndcg_llm
+            
+            # MAP@N for LLM
+            map_score_llm = map_at_k(test_dataframe, llm_predictions_dataframe, 
+                       col_user="userId", col_item="movieId", 
+                       col_rating="rating", col_prediction="prediction", k=k)
+            results[f"map@{k}_LLM"] = map_score_llm
+            
+            # Precision@N for LLM
+            precision_llm = precision_at_k(test_dataframe, llm_predictions_dataframe, 
+                        col_user="userId", col_item="movieId", 
+                        col_rating="rating", col_prediction="prediction", k=k)
+            results[f"precision@{k}_LLM"] = precision_llm
+            
+            # Recall@N for LLM
+            recall_llm = recall_at_k(test_dataframe, llm_predictions_dataframe, 
+                      col_user="userId", col_item="movieId", 
+                      col_rating="rating", col_prediction="prediction", k=k)
+            results[f"recall@{k}_LLM"] = recall_llm
+
+    # Record metrics calculation time
+    metrics_calc_end_time = time.time()
+    timing_results["time_metrics_calculation_ranking"] = metrics_calc_end_time - metrics_calc_start_time
+    print(f"Metrics calculation completed in {timing_results['time_metrics_calculation_ranking']:.2f} seconds")
+
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_ranking"] = total_end_time - total_start_time
+
+    # Add timing results to the main results dictionary
+    results.update(timing_results)
+
+    print("Evaluation complete!")
+    
+    return results
+
+def evaluate_rating_metrics_with_train_test_split(
+    algo: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    test_size: float = 0.25,
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3
+) -> Dict[str, float]:
+    """
+    Evaluate recommendation algorithm using train-test split and calculate rating accuracy metrics.
+    
+    This function evaluates a recommendation algorithm by:
+    1. Splitting ratings data into training and test sets
+    2. Training the algorithm on the training set
+    3. Generating predictions only for items in the test set
+    4. Optionally enhancing predictions using an LLM
+    5. Calculating rating accuracy metrics (RMSE, MAE, R-squared, Explained Variance)
+    
+    Parameters:
+        algo (Any):
+            A recommendation algorithm from the Surprise library that implements
+            .fit() and .predict() methods (e.g., SVD, KNNBasic, SVDpp).
+            
+        ratings_dataframe (pd.DataFrame):
+            DataFrame containing user ratings with at least the columns:
+            - 'userId': User identifier
+            - 'movieId': Movie identifier
+            - 'rating': User's rating (typically 0.5-5.0)
+            
+        id_to_title (Dict[Any, str]):
+            Dictionary mapping movie IDs to their titles.
+            
+        combined_dataframe (pd.DataFrame):
+            DataFrame containing movie metadata with at least:
+            - 'movieId': Movie identifier
+            - Other metadata used for movie descriptions
+            
+        model_name (str):
+            Name of the language model for generating/processing descriptions.
+            
+        chat_format (str):
+            Template string for structuring LLM prompts.
+            
+        descriptions_path (str):
+            File path to cached movie descriptions CSV.
+            
+        api_url (str):
+            API endpoint URL for the language model.
+            
+        headers (Dict[str, str]):
+            HTTP headers for LLM API requests.
+            
+        preferences_path (str):
+            File path to user preferences CSV.
+            
+        scores_path (str):
+            File path to movie scores CSV (IMDb ratings, popularity).
+            
+        test_size (float, default=0.25):
+            Proportion of data to use for testing (0.0-1.0).
+            
+        use_llm (bool, default=False):
+            Whether to enhance predictions using LLM.
+            
+        max_retries (int, default=5):
+            Maximum number of retry attempts for API calls.
+            
+        delay_between_attempts (int, default=1):
+            Delay in seconds between retry attempts.
+            
+        num_favorites (int, default=3):
+            Number of favorite movies to use when calculating LLM similarity.
+    
+    Returns:
+        Dict[str, float]:
+            Dictionary mapping metric names to their values:
+            
+            Rating accuracy metrics:
+            - "rmse": Root Mean Squared Error for base algorithm
+            - "mae": Mean Absolute Error for base algorithm
+            - "rsquared": R-squared score for base algorithm
+            - "explained_variance": Explained variance score for base algorithm
+
+            Each metric is a float, where lower is better for rmse and mae, and higher is better for rsquared and explained_variance.
+
+            When use_llm=True, also includes LLM-enhanced versions:
+            - "rmse_LLM": RMSE for LLM-enhanced predictions
+            - "mae_LLM": MAE for LLM-enhanced predictions
+            - "rsquared_LLM": R-squared for LLM-enhanced predictions
+            - "explained_variance_LLM": Explained variance for LLM-enhanced predictions
+            
+    Additional timing metrics:
+        - "time_total": Total execution time in seconds
+        - "time_train": Time to train the model in seconds
+        - "time_base_predictions": Time to generate base predictions in seconds
+        - "time_llm_predictions": Time to generate LLM predictions in seconds (if use_llm=True)
+        - "time_metrics_calculation": Time to calculate all metrics in seconds
+    """
+    # Start timing the entire process
+    total_start_time = time.time()
+
+    print(f"Starting rating metric evaluation with {test_size*100:.0f}% test split...")
+    
+    # Initialize results dictionary
+    results = {}
+    timing_results = {}
+
+    # Apply stratified split based on items as in the benchmark
+    ratio = 1 - test_size
+    train_dataframe, test_dataframe = python_stratified_split(
+        ratings_dataframe,
+        ratio=ratio, 
+        min_rating=1, 
+        filter_by="item", 
+        col_user="userId", 
+        col_item="movieId"
+    )
+
+    print(f"Train set: {len(train_dataframe)} ratings, Test set: {len(test_dataframe)} ratings")
+    
+    # Set up rating scale for Surprise
+    reader = Reader(rating_scale=(0.5, 5.0))
+
+    # Convert train dataframe to Surprise format for training
+    train_data = Dataset.load_from_df(train_dataframe[['userId', 'movieId', 'rating']], reader)
+    trainset = train_data.build_full_trainset()
+    
+    # Start timing the training process
+    train_start_time = time.time()
+
+    print("Training the model...")
+
+    # Train the algorithm on the training set
+    algo.fit(trainset)
+
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_rating"] = train_end_time - train_start_time
+    print(f"Model training completed in {timing_results['time_train_rating']:.2f} seconds")
+    
+    # Load required dataframes for LLM processing
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+
+    # Start timing base predictions
+    base_pred_start_time = time.time()
+
+    print("Generating base predictions for test set...")
+    base_predictions = []
+    
+    # Only predict for items in the test set (not all possible items)
+    for _, row in test_dataframe.iterrows():
+        user_id = row['userId']
+        movie_id = row['movieId']
+        
+        # Try to generate a prediction
+        try:
+            if trainset.knows_user(trainset.to_inner_uid(user_id)) and trainset.knows_item(trainset.to_inner_iid(movie_id)):
+                pred = algo.predict(user_id, movie_id).est
+                base_predictions.append({
+                    'userId': user_id,
+                    'movieId': movie_id,
+                    'prediction': pred
+                })
+        except Exception as e:
+            continue
+
+    # Convert base predictions to DataFrame
+    base_predictions_dataframe = pd.DataFrame(base_predictions)
+
+    # Ensure consistent data types between test and prediction dataframes
+    if not base_predictions_dataframe.empty:
+        base_predictions_dataframe['userId'] = base_predictions_dataframe['userId'].astype(test_dataframe['userId'].dtype)
+        base_predictions_dataframe['movieId'] = base_predictions_dataframe['movieId'].astype(test_dataframe['movieId'].dtype)
+    
+    # Record base prediction time
+    base_pred_end_time = time.time()
+    timing_results["time_base_predictions_rating"] = base_pred_end_time - base_pred_start_time
+    print(f"Base predictions completed in {timing_results['time_base_predictions_rating']:.2f} seconds")
+
+    # Generate LLM predictions if enabled
+    llm_predictions_dataframe = None
+    if use_llm:
+        # Start timing LLM predictions
+        llm_pred_start_time = time.time()
+
+        print("Generating LLM-enhanced predictions...")
+        llm_predictions = []
+        
+        # Group test data by user to process each user once
+        user_groups = test_dataframe.groupby('userId')
+        n_processed = 0
+        total_users = len(user_groups)
+        
+        for user_id, user_test_data in user_groups:
+            n_processed += 1
+            if n_processed % 10 == 0:
+                print(f"Processing user {n_processed}/{total_users}...")
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            if len(user_prefs) == 0:
+                continue
+                
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get test movies for this user
+            user_test_movies = user_test_data[['movieId', 'rating']].values
+            
+            # If there are test movies, get their descriptions
+            if len(user_test_movies) > 0:
+
+                # Prepare movies for description retrieval
+                candidate_recommendations = []
+                for movie_id, rating in user_test_movies:
+                    movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
+
+                    # Using 0 as a placeholder for the prediction since we don't need it here
+                    candidate_recommendations.append((movie_id, movie_title, 0))
+                
+                # Get descriptions for test movies
+                candidate_movie_descriptions = get_movie_descriptions(
+                    candidate_recommendations, combined_dataframe, model_name, chat_format,
+                    descriptions_path, scores_path, api_url, headers,
+                    max_retries, delay_between_attempts
+                )
+                
+                # Get user's favorite movies from training set
+                favorite_movies = []
+                user_train_data = train_dataframe[train_dataframe['userId'] == user_id]
+                if len(user_train_data) > 0:
+                    top_movies = user_train_data.sort_values('rating', ascending=False).head(num_favorites)
+                    for _, row in top_movies.iterrows():
+                        movie_title = id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}")
+                        favorite_movies.append((movie_title, row['rating']))
+                
+                # Find similarity scores using LLM for each test movie
+                top_movies_similarities = find_top_n_similar_movies(
+                    preferences_text, candidate_movie_descriptions, id_to_title, model_name,
+                    chat_format, len(candidate_movie_descriptions), api_url, headers, movie_scores_df,
+                    prioritize_ratings=prioritize_ratings,
+                    prioritize_popular=prioritize_popular,
+                    favorite_movies=favorite_movies,
+                    num_favorites=num_favorites,
+                    date_range=date_range
+                )
+                
+                # Convert similarity scores to ratings and add to predictions
+                for movie_id, similarity in top_movies_similarities:
+                    
+                    # Convert similarity [-1,1] to rating [0.5,5.0]
+                    normalized_score = 0.5 + ((similarity + 1) / 2) * 4.5
+                    
+                    llm_predictions.append({
+                        'userId': user_id,
+                        'movieId': movie_id,
+                        'prediction': normalized_score
+                    })
+        
+        # Convert LLM predictions to DataFrame
+        if llm_predictions:
+            llm_predictions_dataframe = pd.DataFrame(llm_predictions)
+
+            # Ensure consistent data types between test and prediction dataframes
+            llm_predictions_dataframe['userId'] = llm_predictions_dataframe['userId'].astype(test_dataframe['userId'].dtype)
+            llm_predictions_dataframe['movieId'] = llm_predictions_dataframe['movieId'].astype(test_dataframe['movieId'].dtype)
+
+        # Record LLM prediction time
+        llm_pred_end_time = time.time()
+        timing_results["time_llm_predictions_rating"] = llm_pred_end_time - llm_pred_start_time
+        print(f"LLM predictions completed in {timing_results['time_llm_predictions_rating']:.2f} seconds")
+    
+    # Start timing metrics calculation
+    metrics_calc_start_time = time.time()
+
+    print("Calculating rating metrics...")
+
+    # Calculate rating metrics using base predictions
+    if not base_predictions_dataframe.empty:
+        # RMSE
+        rmse_score = rmse(
+            test_dataframe, base_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["rmse"] = rmse_score
+        
+        # MAE
+        mae_score = mae(
+            test_dataframe, base_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["mae"] = mae_score
+        
+        # R-squared
+        r2_score = rsquared(
+            test_dataframe, base_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["r2"] = r2_score
+        
+        # Explained variance
+        exp_var_score = exp_var(
+            test_dataframe, base_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["exp_var"] = exp_var_score
+    
+    # Calculate rating metrics using LLM predictions if available
+    if use_llm and llm_predictions_dataframe is not None and not llm_predictions_dataframe.empty:
+        # RMSE for LLM
+        rmse_llm = rmse(
+            test_dataframe, llm_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["rmse_LLM"] = rmse_llm
+        
+        # MAE for LLM
+        mae_llm = mae(
+            test_dataframe, llm_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["mae_LLM"] = mae_llm
+        
+        # R-squared for LLM
+        r2_llm = rsquared(
+            test_dataframe, llm_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["r2_LLM"] = r2_llm
+        
+        # Explained variance for LLM
+        exp_var_llm = exp_var(
+            test_dataframe, llm_predictions_dataframe,
+            col_user='userId', col_item='movieId',
+            col_rating='rating', col_prediction='prediction'
+        )
+        results["exp_var_LLM"] = exp_var_llm
+
+    # Record metrics calculation time
+    metrics_calc_end_time = time.time()
+    timing_results["time_metrics_calculation_rating"] = metrics_calc_end_time - metrics_calc_start_time
+    print(f"Metrics calculation completed in {timing_results['time_metrics_calculation_rating']:.2f} seconds")
+
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_rating"] = total_end_time - total_start_time
+
+    # Add timing results to the main results dictionary
+    results.update(timing_results)
+
+    print("Rating metrics evaluation complete!")
+    
+    return results
 
 def calculate_hit_rates(
     algo: Any,
@@ -242,15 +1031,21 @@ def calculate_hit_rates(
         - Handles leave-one-out test set creation and evaluation
         - threshold_totals counts only test cases where rating >= threshold
     """
+
+    # Start timing the entire process
+    print("Starting hit rate calculation...")
+    total_start_time = time.time()
+
     # Create a copy of ratings DataFrame (will have test samples removed)
     ratings_dataframe_testset_removed = ratings_dataframe.copy()
     
+    # Initialize results and timing results dictionaries
+    results = {}
+    timing_results = {}
+    
     # Get largest N value for initial recommendations
     max_n = max(n_values)
-    
-    # Initialize results dictionary
-    results = {}
-    
+
     # Initialize counters for total relevant cases per threshold
     threshold_totals = {threshold: 0 for threshold in thresholds}
     
@@ -272,6 +1067,10 @@ def calculate_hit_rates(
             loo_testset.append((user_id, test_rating['movieId'], test_rating['rating']))
             ratings_dataframe_testset_removed = ratings_dataframe_testset_removed.drop(user_ratings.index[test_rating_index])
 
+    # Start timing model training
+    print("Training the model with leave-one-out test set...")
+    train_start_time = time.time()
+
     # Set up training data
     reader = Reader(rating_scale=(0.5, 5.0))
     data = Dataset.load_from_df(ratings_dataframe_testset_removed[['userId', 'movieId', 'rating']], reader)
@@ -279,6 +1078,11 @@ def calculate_hit_rates(
     
     # Train algorithm
     algo.fit(trainset)
+
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_hit_rates"] = train_end_time - train_start_time
+    print(f"Model training completed in {timing_results['time_train_hit_rates']:.2f} seconds")
     
     # Get all movie IDs for recommendations
     all_movie_ids = ratings_dataframe['movieId'].unique()
@@ -287,6 +1091,10 @@ def calculate_hit_rates(
     max_user_id_val = ratings_dataframe['userId'].max()
     preferences_df = load_user_preferences(preferences_path, max_user_id_val)
     movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+
+    # Start timing the prediction and evaluation process
+    print("Generating predictions and evaluating hit rates...")
+    pred_eval_start_time = time.time()
 
     # Process each test case
     for user_id, movie_id, rating in loo_testset:
@@ -365,9 +1173,16 @@ def calculate_hit_rates(
                         metric_key = f"hit_rate_N@{n}_LLM" if threshold == 0.0 else f"cumulative_hit_{threshold}_N@{n}_LLM"
                         results[metric_key] = results.get(metric_key, 0) + 1
 
-    # Inside calculate_hit_rates, after processing all test cases:
-    print("Threshold totals:", threshold_totals)
-    print("Results before conversion:", results)
+    
+    # Record prediction and evaluation time
+    pred_eval_end_time = time.time()
+    timing_results["time_predictions_and_evaluation_hit_rates"] = pred_eval_end_time - pred_eval_start_time
+    print(f"Predictions and evaluation completed in {timing_results['time_predictions_and_evaluation_hit_rates']:.2f} seconds")
+
+    # Print threshold totals for debugging and raw hits for each threshold
+    # Uncomment for debugging
+    # print("Threshold totals:", threshold_totals)
+    # print("Results before conversion:", results)
 
     # Convert counts to rates using appropriate totals for each threshold
     rates = {}
@@ -380,6 +1195,14 @@ def calculate_hit_rates(
         
         # Calculate rate using the correct total for this threshold
         rates[k] = v / threshold_totals[threshold] if threshold_totals[threshold] > 0 else 0
+
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_hit_rates"] = total_end_time - total_start_time
+    print(f"Total hit rate calculation completed in {timing_results['time_total_hit_rates']:.2f} seconds")
+
+    # Add timing results to the rates dictionary
+    rates.update(timing_results)
 
     return rates
 
@@ -832,7 +1655,8 @@ def retrieve_all_descriptions(
     headers: dict,
     start_movie_id: int = 1,
     max_retries: int = 5,
-    delay_between_attempts: int = 1
+    delay_between_attempts: int = 1,
+    timeout: Optional[int] = None
 ) -> pd.DataFrame:
     """
     Retrieve and cache movie descriptions and IMDb scores for all movies.
@@ -872,7 +1696,9 @@ def retrieve_all_descriptions(
       max_retries (int, default=5):
         Maximum number of retry attempts for API calls (for both IMDb and LLM requests).
       delay_between_attempts (int, default=1):
-        Delay in seconds between retry attempts.
+        Delay in seconds between retry attempts for IMDb API.
+      timeout (Optional[int], default=None):
+        Timeout for LLM API requests (in seconds). Defaults to None.
 
     Returns:
       pd.DataFrame:
@@ -926,7 +1752,7 @@ def retrieve_all_descriptions(
                     if 'plot' in movie:
                         description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
                     else:
-                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers, timeout=timeout)
                     description = description.replace('\n', ' ').replace('\r', ' ').strip()
                     cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
 
@@ -940,7 +1766,7 @@ def retrieve_all_descriptions(
             
             # If no movie data could be retrieved and description is still missing, generate it via LLM.
             elif cached_description == "":
-                description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers, timeout=timeout)
                 description = description.replace('\n', ' ').replace('\r', ' ').strip()
                 cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'descri ption'] = description
 
@@ -1267,7 +2093,8 @@ def generate_description_with_few_shot(
     model_name: str,
     chat_format: str,
     url: str,
-    headers: Dict[str, str]
+    headers: Dict[str, str],
+    timeout: Optional[int] = None
 ) -> str:
     """
     Generate a movie description using few-shot prompting with a language model.
@@ -1289,6 +2116,8 @@ def generate_description_with_few_shot(
           The API endpoint URL to which the request is sent.
       headers (dict):
           A dictionary of HTTP headers (e.g., containing authorization) to include in the API request.
+      timeout (int, optional):
+          The timeout for the API request in seconds. If not specified, no timeout will be applied.
 
     Returns:
       str:
@@ -1352,7 +2181,7 @@ def generate_description_with_few_shot(
     }
 
     # Send POST request to language model API.
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload, timeout=timeout)
     
     if response.status_code == 200:
         # Extract and return content from API response.
@@ -1769,7 +2598,8 @@ def load_cached_descriptions(descriptions_path: str, max_movie_id: int) -> pd.Da
         2       3           
     """
     if os.path.exists(descriptions_path):
-        cached_descriptions = pd.read_csv(descriptions_path)
+        cached_descriptions = pd.read_csv(descriptions_path, dtype={'movieId': int, 'description': str})
+        
         # Ensure all movie IDs from 1 to max_movie_id are present
         all_movie_ids = pd.DataFrame({'movieId': range(1, max_movie_id + 1)})
         complete_cached_descriptions = pd.merge(all_movie_ids, cached_descriptions, on='movieId', how='left')
@@ -1853,7 +2683,8 @@ def get_movie_descriptions(
     url: str,
     headers: Dict[str, str],
     max_retries: int,
-    delay_between_attempts: int
+    delay_between_attempts: int,
+    timeout: Optional[int] = None
 ) -> Dict[Any, str]:
     """
     Retrieves and caches movie descriptions and IMDb metadata for a list of recommended movies.
@@ -1887,7 +2718,9 @@ def get_movie_descriptions(
         max_retries (int):
             Maximum number of retry attempts for IMDb API calls
         delay_between_attempts (int):
-            Seconds to wait between retry attempts
+            Seconds to wait between retry attempts for IMDb API calls
+        timeout (int, optional):
+            Timeout for LLM API requests in seconds. Defaults to none.
 
     Returns:
         Dict[Any, str]:
@@ -1944,7 +2777,7 @@ def get_movie_descriptions(
                         description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
                     else:
                         # Could not find a description, as a last resort, generate a description using few shot prompting
-                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                        description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers, timeout=timeout)
                         
                     # Ensure the description is a single line
                     description = description.replace('\n', ' ').replace('\r', ' ').strip()
@@ -1972,7 +2805,7 @@ def get_movie_descriptions(
             else:
                 # If movie data fetch failed but we need a description
                 if cached_description == "":
-                    description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers)
+                    description = generate_description_with_few_shot(movie_title, model_name, chat_format, url, headers, timeout=timeout)
                     description = description.replace('\n', ' ').replace('\r', ' ').strip()
                     cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
                 else:
@@ -2647,7 +3480,8 @@ def retrieve_all_descriptions(
     headers: Dict[str, str],
     start_movie_id: int = 1,
     max_retries: int = 5,
-    delay_between_attempts: int = 1
+    delay_between_attempts: int = 1,
+    timeout: Optional[int] = None
 ) -> pd.DataFrame:
     """
     Retrieves and caches movie descriptions and IMDb metadata for all movies in the dataset.
@@ -2715,6 +3549,8 @@ def retrieve_all_descriptions(
         delay_between_attempts (int, optional):
             Delay in seconds between retry attempts.
             Defaults to 1.
+        timeout (int, optional):
+            Timeout in seconds for LLM API requests. Defaults to None.
 
     Returns:
         pd.DataFrame:
@@ -2822,7 +3658,7 @@ def retrieve_all_descriptions(
                         description = movie['plot'][0] if isinstance(movie['plot'], list) else movie['plot']
                     else:
                         description = generate_description_with_few_shot(
-                            movie_title, model_name, chat_format, url, headers
+                            movie_title, model_name, chat_format, url, headers, timeout=timeout
                         )
                     description = description.replace('\n', ' ').replace('\r', ' ').strip()
                     cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
@@ -2843,7 +3679,7 @@ def retrieve_all_descriptions(
             
             elif needs_description:
                 description = generate_description_with_few_shot(
-                    movie_title, model_name, chat_format, url, headers
+                    movie_title, model_name, chat_format, url, headers, timeout=timeout
                 )
                 description = description.replace('\n', ' ').replace('\r', ' ').strip()
                 cached_descriptions.loc[cached_descriptions['movieId'] == movie_id, 'description'] = description
@@ -3110,6 +3946,195 @@ def extract_year_from_title(title: str) -> Optional[int]:
         return int(match.group(1))
     return None
 
+def measure_recommendation_time(
+    algo: Any,
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    sample_size: int = 100,
+    recommendation_count: int = 10,
+    search_count: int = 100,
+    num_favorites: int = 3,
+    seed: Optional[int] = None,
+    sample_method: Optional[str] = None,
+    is_large_dataset: bool = False
+) -> Dict[str, float]:
+    """
+    Measures the average time taken to generate recommendations for a random sample of users.
+    
+    This function selects a sample of users (either first N or random N) and measures 
+    the time required for generating recommendations using both base and LLM-enhanced methods.
+    
+    Parameters:
+        algo (Any):
+            Trained recommendation algorithm (e.g., SVD instance)
+        ratings_dataframe (pd.DataFrame):
+            DataFrame with user ratings data
+        id_to_title (Dict[Any, str]):
+            Dictionary mapping movie IDs to titles
+        combined_dataframe (pd.DataFrame):
+            DataFrame with movie metadata
+        model_name (str):
+            Name of the language model for similarity calculation
+        chat_format (str):
+            Template for LLM prompts
+        descriptions_path (str):
+            Path to cached movie descriptions
+        api_url (str):
+            LLM API endpoint URL
+        headers (Dict[str, str]):
+            HTTP headers for API requests
+        preferences_path (str):
+            Path to user preferences CSV
+        scores_path (str):
+            Path to movie scores CSV
+        sample_size (int, default=100):
+            Number of random users to sample
+        recommendation_count (int, default=10):
+            Number of recommendations to generate per user
+        search_count (int, default=100):
+            Size of candidate pool for LLM processing
+        num_favorites (int, default=3):
+            Number of favorite movies to include in similarity calculation
+        seed (Optional[int], default=None):
+            Random seed for reproducible sampling
+        sample_method (Optional[str], default=None):
+            Method to select users: "first" for first N users, "random" for random N users.
+            If None, automatically selects based on is_large_dataset.
+        is_large_dataset (bool, default=False):
+            Whether this is a large dataset. If True and sample_method is None,
+            defaults to "first". Otherwise defaults to "random".
+    
+    Returns:
+        Dict[str, Any]: Dictionary with timing results:
+            - "avg_base_time": Average time for base recommendations (seconds)
+            - "avg_llm_time": Average time for LLM enhancement (seconds)
+            - "avg_total_time": Average sums of base times and llm times per user (seconds)
+            - "base_times": List of individual base recommendation times
+            - "llm_times": List of individual LLM enhancement times
+            - "total_times": List of individual sums of base times and LLM times
+    """
+    # Set random seed if provided
+    if seed is not None:
+        random.seed(seed)
+    
+    # Get unique user IDs and sample
+    all_user_ids = ratings_dataframe['userId'].unique()
+
+    # Determine sampling method if not specified
+    if sample_method is None:
+        sample_method = "first" if is_large_dataset else "random"
+
+    sample_size = min(sample_size, len(all_user_ids)) # Ensure sample size does not exceed available users
+    
+    # Sample users according to selected method
+    if sample_method == "first":
+        sampled_user_ids = sorted(all_user_ids)[:sample_size]
+        print(f"Using first {sample_size} users for measurement")
+    else:  # "random"
+        sampled_user_ids = random.sample(list(all_user_ids), sample_size)
+        print(f"Using {sample_size} random users for measurement")
+    
+    # Load required resources
+    all_movie_ids = ratings_dataframe['movieId'].unique()
+    preferences_df = load_user_preferences(preferences_path, ratings_dataframe['userId'].max())
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+    
+    # Initialize timing metrics
+    base_times = []
+    llm_times = []
+    total_times = []
+        
+    # Process each user
+    for i, user_id in enumerate(sampled_user_ids):
+        print(f"Processing user {i+1}/{sample_size} (userId: {user_id})...")
+        
+        # Measure base recommendation time
+        base_start_time = time.time()
+        top_n_recommendations = get_top_n_recommendations(
+            algo, user_id, all_movie_ids, ratings_dataframe, 
+            id_to_title, search_count
+        )
+        base_end_time = time.time()
+        base_time = base_end_time - base_start_time
+        base_times.append(base_time)
+        
+        # Get user preferences and settings
+        user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+        if len(user_prefs) > 0:
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+        else:
+            # Default values if user preferences not found
+            prioritize_ratings = False
+            prioritize_popular = False
+            preferences_text = ""
+            date_range = None
+        
+        # Get user's favorite movies
+        favorite_movies = get_user_favorite_movies(
+            user_id, ratings_dataframe, id_to_title, 
+            num_favorites=num_favorites
+        )
+        
+        # Get movie descriptions for candidates
+        descriptions = get_movie_descriptions(
+            top_n_recommendations, combined_dataframe, model_name, chat_format,
+            descriptions_path, scores_path, api_url, headers,
+            max_retries=5, delay_between_attempts=1
+        )
+        
+        # Measure LLM enhancement time
+        llm_start_time = time.time()
+        llm_recommendations = find_top_n_similar_movies(
+            preferences_text, descriptions, id_to_title, model_name,
+            chat_format, recommendation_count, api_url, headers, movie_scores_df,
+            prioritize_ratings=prioritize_ratings,
+            prioritize_popular=prioritize_popular,
+            favorite_movies=favorite_movies,
+            num_favorites=num_favorites,
+            date_range=date_range
+        )
+        llm_end_time = time.time()
+        llm_time = llm_end_time - llm_start_time
+        llm_times.append(llm_time)
+        
+        # Calculate total time as sum of algorithmic components 
+        total_time = base_time + llm_time  
+        total_times.append(total_time)
+        
+        print(f"User {user_id} - Base: {base_time:.2f}s, LLM: {llm_time:.2f}s, Total: {total_time:.2f}s")
+    
+    # Calculate average times
+    avg_base_time = sum(base_times) / len(base_times) if base_times else 0
+    avg_llm_time = sum(llm_times) / len(llm_times) if llm_times else 0
+    avg_total_time = sum(total_times) / len(total_times) if total_times else 0
+    
+    results = {
+        "avg_base_time": avg_base_time,
+        "avg_llm_time": avg_llm_time,
+        "avg_total_time": avg_total_time,
+        "base_times": base_times,
+        "llm_times": llm_times,
+        "total_times": total_times
+    }
+    
+    print("\nTiming Results:")
+    print(f"Average Base Recommendation Time: {avg_base_time:.2f} seconds")
+    print(f"Average LLM Enhancement Time: {avg_llm_time:.2f} seconds")
+    print(f"Average Total Time per User: {avg_total_time:.2f} seconds")
+    
+    return results
+
 def main():
     """
     Main entry point for the LLM Recommendation System application.
@@ -3194,14 +4219,21 @@ def main():
     """
 
     parser = argparse.ArgumentParser(description='LLM Recommendation System')
-    parser.add_argument('--mode', type=str, default='development', choices=['development', 'production', 'generate-data'],
-                        help='Running mode: development, production, or generate-data')
+    parser.add_argument('--mode', type=str, default='development', 
+                        choices=['development', 'production', 'generate-data', 'time-measurement'],
+                        help='Running mode: development, production, generate-data, or time-measurement')
     parser.add_argument('--start-movie-id', type=int, default=1, help='Starting movie ID for data generation')
     parser.add_argument('--start-user-id', type=int, default=1, help='Starting user ID for data generation')
+    parser.add_argument('--sample-size', type=int, default=100, help='Number of users to sample for time measurement')
+    parser.add_argument('--sample-method', type=str, 
+                        choices=['first', 'random'], 
+                        help='Method to select users for time measurement: "first" or "random"')
     args = parser.parse_args()
 
-    if args.mode == 'production':
+    # Need LLM API timeout if using OpenAI
+    api_timeout = 60 if args.mode == 'production' else None
 
+    if args.mode == 'production' or args.mode == 'generate-data':
         # Use OpenAPI 
         api_url = "https://api.openai.com/v1/chat/completions"
         api_key = os.getenv("OPENAI_API_KEY")
@@ -3305,13 +4337,87 @@ def main():
     # Check for generate-data mode
     if args.mode == 'generate-data':
         # Retrieve all descriptions and get the updated DataFrame
-        cached_descriptions = retrieve_all_descriptions(combined_dataframe, model_name, chat_format, descriptions_path, scores_path, api_url, headers, args.start_movie_id)
+        cached_descriptions = retrieve_all_descriptions(
+            combined_dataframe, 
+            model_name, 
+            chat_format, 
+            descriptions_path, 
+            scores_path, 
+            api_url, 
+            headers, 
+            args.start_movie_id,
+            timeout=api_timeout)
         
         # Merge descriptions into combined_dataframe
         combined_dataframe = combined_dataframe.merge(cached_descriptions, on='movieId', how='left')
         
         # Update the call to generate_all_user_preferences to use the updated combined_dataframe
         generate_all_user_preferences(ratings_dataframe, combined_dataframe, movie_scores_df, model_name, chat_format, preferences_path, api_url, headers, args.start_user_id)
+        return
+    
+    # Check for time-measurement mode
+    if args.mode == 'time-measurement':
+        print(f"\nRunning time measurement with sample size of {args.sample_size} users...")
+        
+        # Initialize and train the algorithm (using already loaded datasets)
+        print("Training SVD algorithm...")
+        reader = Reader(rating_scale=(0.5, 5.0))
+        data = Dataset.load_from_df(ratings_dataframe[['userId', 'movieId', 'rating']], reader)
+        trainset = data.build_full_trainset()
+        algo = SVD()
+        algo.fit(trainset)
+        
+        # Perform time measurement
+        print("Starting performance measurement...")
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        performance_results = measure_recommendation_time(
+            algo=algo,
+            ratings_dataframe=ratings_dataframe,
+            id_to_title=id_to_title,
+            combined_dataframe=combined_dataframe,
+            model_name=model_name,
+            chat_format=chat_format,
+            descriptions_path=descriptions_path,
+            api_url=api_url,
+            headers=headers,
+            preferences_path=preferences_path,
+            scores_path=scores_path,
+            sample_size=args.sample_size,
+            recommendation_count=10,
+            search_count=100,
+            num_favorites=3,
+            sample_method=args.sample_method,
+            is_large_dataset=(dataset_choice == "2")
+        )
+        
+        # Save performance results to CSV
+        performance_path = os.path.join(base_path, f'performance_results_{current_time}.csv')
+        
+        # Create main results DataFrame
+        performance_df = pd.DataFrame({
+            'Metric': ['Base Time', 'LLM Time', 'Total Time'],
+            'Average (seconds)': [
+                performance_results['avg_base_time'],
+                performance_results['avg_llm_time'],
+                performance_results['avg_total_time']
+            ]
+        })
+        
+        # Save main results
+        performance_df.to_csv(performance_path, index=False)
+        print(f"Performance summary saved to {performance_path}")
+        
+        # Save detailed results (all individual timings)
+        detailed_path = os.path.join(base_path, f'detailed_performance_{current_time}.csv')
+        detailed_df = pd.DataFrame({
+            'User': list(range(1, len(performance_results['base_times'])+1)),
+            'Base Time': performance_results['base_times'],
+            'LLM Time': performance_results['llm_times'],
+            'Total Time': performance_results['total_times']
+        })
+        detailed_df.to_csv(detailed_path, index=False)
+        print(f"Detailed performance data saved to {detailed_path}")
+        
         return
 
     # Ask how many users to add
@@ -3543,20 +4649,8 @@ def main():
             num_favorites=num_favorites, search_count=100
         )
         
-        '''
-        cumulative_hit_rate_svd_100, cumulative_hit_rate_llm_100 = calculate_cumulative_hit_rate(
-            algo, ratings_dataframe, id_to_title, combined_dataframe, model_name, chat_format,
-            descriptions_path, api_url, headers, preferences_path, scores_path, n=100, threshold=4.0, user_ids=new_user_ids, use_llm=True, search_count=1000
-        )
-        '''
-        
         print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=10): {cumulative_hit_rate_svd_10:.2f}")
         print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=10): {cumulative_hit_rate_llm_10:.2f}")
-    
-        '''
-        print(f"\nCalculating Hit Rate for new users (SVD, threshold=4.0, n=100): {cumulative_hit_rate_svd_100:.2f}")
-        print(f"Cumulative Hit Rate for new users (LLM-enhanced, threshold=4.0, n=100): {cumulative_hit_rate_llm_100:.2f}")
-        '''
         
         # Now, generate recommendations for each user using both methods
         all_movie_ids = movies_dataframe['movieId'].unique()
@@ -3627,54 +4721,189 @@ def main():
                 movie_title = id_to_title[movie_id]
                 print(f"Movie Title: {movie_title}, Similarity Score: {score}")
     else:
-        # Where metrics calculation begins
-        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
-
-        print("\nCalculating metrics for all algorithms...")
-
-        # Initialize algorithms
-        algorithms = {
-            'KNN': KNNBasic(),
-            'SVD': SVD(), 
-            'SVD++': SVDpp()
-        }
-
-        # Define metrics configuration  
-        n_values = [1, 5, 10]
-        thresholds = [0.0, 4.0]  # 0.0 for regular hit rate, 4.0 for cumulative
-        num_favorites = 3
-
-        # Create DataFrame to store results
-        metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric', 'Value'])
-
-        # Calculate all metrics in one pass
-        for algo_name, algo in algorithms.items():
-            print(f"\nProcessing {algo_name}...")
             
-            metrics = calculate_hit_rates(
-                algo, ratings_dataframe, id_to_title, combined_dataframe,
-                model_name, chat_format, descriptions_path, api_url, headers,
-                preferences_path, scores_path, n_values=n_values, thresholds=thresholds,
-                user_ids=None, use_llm=True, num_favorites=num_favorites, search_count=100
-            )
-            print(f"Metrics for {algo_name}:", metrics)
+            # Where metrics calculation begins
+            total_metrics_start_time = time.time()  # Start timing the entire metrics process
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
+
+            print("\nMetrics calculation:")
+
+            # Ask user to choose evaluation method
+            print("\nPlease select the evaluation method:")
+            print("1. Leave-One-Out Validation (calculates hit rates by removing one item per user)")
+            print("2. Stratified Train-Test Split with Ranking Metrics (uses 75/25 split to evaluate various metrics including NDCG, MAP, Precision, Recall)")
+            print("3. Stratified Train-Test Split with Rating Metrics (uses 75/25 split to evaluate RMSE, MAE, R2, Explained Variance)")
+            print("4. Stratified Train-Test Split with Ranking and Rating Metrics (uses 75/25 split to evaluate NDCG, MAP, Precision, Recall, RMSE, MAE, R2, Explained Variance)")
+            print("5. All of the above (1 + 4)")
             
-            # Add metrics to DataFrame
-            for metric_name, value in metrics.items():
-                is_llm = "_LLM" in metric_name
-                base_metric = metric_name.replace("_LLM", "")
+            while True:
+                eval_method = input("Enter your choice (1-5): ").strip()
+                if eval_method in ['1', '2', '3', '4', '5']:
+                    break
+                print("Invalid choice. Please enter a number from 1 to 5.")
+                
+            # Ask user if they want to use LLM enhancement
+            while True:
+                use_llm_input = input("\nDo you want to use LLM enhancement for recommendations? (y/n): ").strip().lower()
+                if use_llm_input in ['y', 'n', 'yes', 'no']:
+                    use_llm = use_llm_input in ['y', 'yes']
+                    break
+                print("Invalid choice. Please enter y or n.")
+                
+            if use_llm:
+                print("LLM enhancement will be used. Metrics will include both base algorithm and LLM-enhanced results.")
+            else:
+                print("LLM enhancement will be skipped. Only base algorithm metrics will be calculated.")
+
+            # Initialize algorithms
+            algorithms = {
+                'KNN': KNNBasic(),
+                'SVD': SVD(), 
+                'SVD++': SVDpp()
+            }
+
+            # Define metrics configuration  
+            top_k_values = [10] # Used for NDCG, MAP, Precision, Recall
+
+            # Define thresholds for hit rate calculation
+            n_values = [1, 5, 10]
+
+            # 0.0 for regular hit rate, 4.0 for cumulative hit rate
+            thresholds = [0.0, 4.0]  
+            
+            # Number of favorite movies to use for similarity score calculation
+            num_favorites = 3
+            
+            # Create DataFrame to store results
+            metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric Type', 'Metric', 'Value'])
+
+            # Ask user which algorithms to run
+            selected_algorithms = {}
+            print("\nSelect which algorithms to calculate metrics for:")
+            for algo_name, algo in algorithms.items():
+                response = input(f"Calculate metrics for {algo_name}? (y/n): ").strip().lower()
+                if response == 'y' or response == 'yes':
+                    selected_algorithms[algo_name] = algo
+                    print(f"Added {algo_name} to calculation queue.")
+                else:
+                    print(f"Skipping {algo_name}.")
+
+            if not selected_algorithms:
+                print("No algorithms selected. Skipping metrics calculation.")
+            else:
+                # Calculate metrics for each selected algorithm
+                for algo_name, algo in selected_algorithms.items():
+                    print(f"\nProcessing {algo_name}...")
+
+                    # Start timing for this specific algorithm
+                    algo_start_time = time.time()
+                    
+                    metrics = {}  # Initialize empty metrics dictionary
+                    
+                    if eval_method == '1' or eval_method == '5':
+                        # Leave-One-Out validation (original method)
+                        leave_one_out_metrics = calculate_hit_rates(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, n_values=n_values, thresholds=thresholds,
+                            user_ids=None, use_llm=use_llm, num_favorites=num_favorites, search_count=100
+                        )
+                        metrics.update(leave_one_out_metrics)
+                        print(f"Leave-One-Out metrics for {algo_name}:", leave_one_out_metrics)
+                    
+                    if eval_method == '2' or eval_method == '4' or eval_method == '5':
+                        # Stratified train-test split with ranking metrics
+                        ranking_metrics = evaluate_ranking_metrics_with_train_test_split(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, top_k_values=top_k_values,
+                            test_size=0.25, use_llm=use_llm, num_favorites=num_favorites, search_count=100
+                        )
+                        metrics.update(ranking_metrics)
+                        print(f"Ranking metrics for {algo_name}:", ranking_metrics)
+                    
+                    if eval_method == '3' or eval_method == '4' or eval_method == '5':
+                        # Stratified train-test split with rating metrics
+                        rating_metrics = evaluate_rating_metrics_with_train_test_split(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, test_size=0.25, use_llm=use_llm, 
+                            num_favorites=num_favorites
+                        )
+                        metrics.update(rating_metrics)
+                        print(f"Rating metrics for {algo_name}:", rating_metrics)
+
+                    # Calculate and store total time for this algorithm
+                    algo_total_time = time.time() - algo_start_time
+                    metrics[f"time_total_algorithm_{algo_name.lower()}"] = algo_total_time
+                    print(f"Total time for {algo_name}: {algo_total_time:.2f} seconds")
+                    
+                    for metric_name, value in metrics.items():
+                        # Handle standard performance metrics (existing code)
+                        if any(metric_type in metric_name.lower() for metric_type in ["ndcg", "map", "precision", "recall", "hit_rate", "rmse", "mae", "r2", "exp_var"]):
+                            is_llm = "_LLM" in metric_name
+                            base_metric = metric_name.replace("_LLM", "")
+                            
+                            # Determine metric type
+                            if "ndcg" in metric_name.lower():
+                                metric_type = "NDCG"
+                            elif "map" in metric_name.lower():
+                                metric_type = "MAP"
+                            elif "precision" in metric_name.lower():
+                                metric_type = "Precision"
+                            elif "recall" in metric_name.lower():
+                                metric_type = "Recall"
+                            elif "rmse" in metric_name.lower():
+                                metric_type = "RMSE"
+                            elif "mae" in metric_name.lower():
+                                metric_type = "MAE"
+                            elif "r2" in metric_name.lower():
+                                metric_type = "R2"
+                            elif "exp_var" in metric_name.lower():
+                                metric_type = "Explained Variance"
+                            else:
+                                metric_type = "Hit Rate"
+                            
+                            metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                                'Algorithm': [f'{algo_name} LLM' if is_llm else algo_name],
+                                'Metric Type': [metric_type],
+                                'Metric': [base_metric],
+                                'Value': [value]
+                            }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+                        
+                        # Handle timing metrics (new code)
+                        elif metric_name.startswith("time_"):
+                            # Convert timing metrics to seconds with 2 decimal places
+                            formatted_value = round(value, 2)
+                            metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                                'Algorithm': [f'{algo_name} LLM' if use_llm else algo_name],
+                                'Metric Type': ['Timing'],
+                                'Metric': [metric_name],
+                                'Value': [formatted_value]
+                            }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+
+                    print(f"DataFrame after {algo_name}:")
+                    print(metrics_df)
+
+                    # Save after each algorithm with specified float format
+                    metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
+
+                # Calculate total time for all metrics
+                total_metrics_time = time.time() - total_metrics_start_time
+                
+                # Add overall timing metric to the DataFrame
                 metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                    'Algorithm': [f'{algo_name} LLM' if is_llm else algo_name],
-                    'Metric': [base_metric],
-                    'Value': [value]
-                })], ignore_index=True)
+                    'Algorithm': ['All'],
+                    'Metric Type': ['Timing'],
+                    'Metric': ['time_total_all_metrics'],
+                    'Value': [round(total_metrics_time, 2)]
+                }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
 
-            print(f"DataFrame after {algo_name}:")  # Add this
-            print(metrics_df)  # Add this
+                # Save the final metrics DataFrame
+                metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
 
-            # Save after each calculation with specified float format
-            metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
+                print(f"\nMetrics calculation complete. Results saved to {metrics_path}")
 
 if __name__ == "__main__":
     main()
