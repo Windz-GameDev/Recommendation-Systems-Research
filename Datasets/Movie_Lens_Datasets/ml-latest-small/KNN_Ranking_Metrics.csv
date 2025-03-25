@@ -1,0 +1,14 @@
+Algorithm,Metric Type,Metric,Value
+KNN,NDCG,ndcg@10,0.001133
+KNN,MAP,map@10,0.000278
+KNN,Precision,precision@10,0.001311
+KNN,Recall,recall@10,0.000210
+KNN LLM,NDCG,ndcg@10,0.000617
+KNN LLM,MAP,map@10,0.000126
+KNN LLM,Precision,precision@10,0.000820
+KNN LLM,Recall,recall@10,0.000088
+KNN LLM,Timing,time_train,0.070000
+KNN LLM,Timing,time_base_predictions,147.260000
+KNN LLM,Timing,time_llm_predictions,20451.410000
+KNN LLM,Timing,time_metrics_calculation,24.680000
+KNN LLM,Timing,time_total,20623.610000

@@ -1,0 +1,1226 @@
+%\documentclass[12pt]{article}
+\documentclass[sigconf]{acmart}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    }
+
+\urlstyle{same}
+\usepackage{float}
+\usepackage{url}
+%\usepackage[backend=biber,style=alphabetic]{biblatex}
+%\addbibresource{references.bib}
+
+\usepackage{booktabs}
+\usepackage{mdframed} 
+\usepackage{relsize}
+
+\usepackage{enumitem}
+
+\newcommand{\changeAD}[1]{\textcolor{red}{AD: #1}}
+
+%\date{7/22/2024}
+
+%%
+%% \BibTeX command to typeset BibTeX logo in the docs
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+%% Rights management information.  This information is sent to you
+%% when you complete the rights form.  These commands have SAMPLE
+%% values in them; it is your responsibility as an author to replace
+%% the commands and values with those provided to you when you
+%% complete the rights form.
+\setcopyright{acmlicensed}
+\copyrightyear{2024}
+\acmYear{2024}
+\acmDOI{XXXXXXX.XXXXXXX}
+
+%% These commands are for a PROCEEDINGS abstract or paper.
+\acmConference[WWW '25]{The Web Conference}{April 28 - May 02,
+  2025}{Sydney, Australia}
+%%
+%%  Uncomment \acmBooktitle if the title of the proceedings is different
+%%  from ``Proceedings of ...''!
+%%
+%%\acmBooktitle{Woodstock '18: ACM Symposium on Neural Gaze Detection,
+%%  June 03--05, 2018, Woodstock, NY}
+\acmISBN{978-1-4503-XXXX-X/18/06}
+
+\usepackage{tikz} % Add this package for flowcharts \usetikzlibrary{shapes.geometric, arrows}
+\usetikzlibrary{positioning}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10002951.10003317.10003347.10003350</concept_id>
+       <concept_desc>Information systems~Recommender systems</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Information systems~Recommender systems}
+
+\tikzstyle{startstop} = [rectangle, rounded corners, minimum width=4cm, minimum height=1cm, text centered, draw=black, fill=red!30, inner sep=0.3cm]
+\tikzstyle{process} = [rectangle, minimum width=4cm, minimum height=1cm, text centered, draw=black, fill=orange!30, inner sep=0.3cm]
+\tikzstyle{arrow} = [thick,->,>=stealth]
+
+\begin{document}
+
+\title{A Language-Driven Framework for Improving Personalized Recommendations: Merging LLMs with Traditional Algorithms}
+%\author{Aaron Goldstein, Ayan Dutta}
+
+\author{Aaron Goldstein}
+%\authornote{Both authors contributed equally to this research.}
+\email{n01421643@unf.edu}
+\affiliation{%
+  \institution{University of North Florida}
+  \city{Jacksonville}
+  \state{Florida}
+  \country{USA}
+}
+
+%\orcid{1234-5678-9012}
+\author{Ayan Dutta}
+%\authornotemark[1]
+\email{a.dutta@unf.edu}
+\affiliation{%
+  \institution{University of North Florida}
+  \city{Jacksonville}
+  \state{Florida}
+  \country{USA}
+}
+
+
+\renewcommand{\shortauthors}{Goldstein and Dutta}
+
+%%
+%% The abstract is a short summary of the work to be presented in the
+%% article.
+\begin{abstract}
+Traditional recommendation algorithms are not designed to provide personalized recommendations based on user preferences provided through text, e.g., "I like movies which take me into a dreamland". Large Language Models (LLMs) have emerged as one of the most promising tools for natural language processing in recent years. This research proposes a framework that leverages the capabilities of LLM to enhance movie recommendation systems by refining the recommendations of traditional recommendation algorithms and integrating them with language-based user preference inputs. We employ Singular Value Decomposition (SVD) and SVD++ algorithms to generate initial movie recommendations. The base algorithms are implemented by the Surprise Python library and trained on the MovieLens 100k dataset. We compare the base algorithms' performance with our LLM-enhanced versions to quantify improvements in recommendation quality and personalization by measuring hit rates, cumulative hit rates, and perceived quality -- in our initial pilot testing with an earlier version of the system, $71.5\%$ of users preferred our LLM-enhanced recommendations over the traditional ones. Our framework generates preference profiles for all users in the dataset automatically based on their favorite movies, though users can also specify preferences manually which is recommended for optimal results. Using the automated approach of generating preference profiles, our framework surpassed standard SVD and SVD++ for every hit rate metric. Our framework allows the recommendation system to improve its understanding of individual users, providing personalization on an as-needed basis for streaming service platforms to provide their users custom tailored recommendations.
+\end{abstract}
+
+\keywords{Recommender systems, Large Language model, User preference, Web Scraping}
+
+\maketitle
+\section{Introduction}
+%\changeAD{AD will write}
+%show examples from Amazon Alexa.
+Recommendation systems are integral parts of modern-day online experiences ranging from e-commerce to OTT platforms~\cite{aggarwal2016introduction,chiang2024recommender,roy2022systematic}. Given the recent rise in capabilities of Large Language Models (LLMs), we can utilize them to understand user preferences before providing final recommendations to customers. Certain companies such as Amazon are already giving such options on their Fire devices showing suggestions like "Show me Meryl Streep romance movies". Despite the already exciting number of studies that focus on combining LLMs and Rec Systems, extensively reviewed by \cite{wu2024survey}, there is still much room for further advancement and innovation.
+
+To incorporate such text-based user preferences into the final recommendations, in this paper, we propose using an LLM-based architecture. The LLM is used in four key places: 1) in movie information retrieval through fuzzy matching when IMDb IDs are outdated or broken, 2) if movie descriptions are not available online after retrieval attempts, we use the LLM to generate concise descriptions, 3) in automatic generation of user preference profiles when users cannot or choose not to provide preferences manually, and 4) in similarity scoring of titles recommended by existing state-of-the-art SVD-based recommendations~\cite{koren2009matrix}. The similarity scoring system helped us to fine-tune the SVD recommendations and provide users with better-quality recommendations. The scoring system is designed by us and provided to the LLM as an example to begin with. The LLM learned from those examples and provided recommendations based on the scoring system (see Section \ref{sec:similar_scoring}). In our initial pilot test with an earlier Phi-3 model, when providing these LLM-enhanced recommendations along with SVD ones anonymously to 7 users, 5 of them chose our proposed LLM-enhanced ones over the traditional SVD-based ones. This shows the promise of such fine-tuned recommendation systems that integrate textual user preferences.  
+
+\section{Related Work}
+
+Recent advancements in Large Language Models (LLMs) have created new opportunities for enhancing recommendation systems. This section reviews relevant literature on LLM integration with traditional recommendation algorithms, focusing on approaches that align with our research direction.
+
+\subsection{LLMs for Recommendation Systems}
+
+As outlined by Wu et al.~\cite{wu2024survey}, LLM-based recommendation approaches can be categorized into three main paradigms: (1) LLM Embeddings + RS, where LLMs serve as feature extractors, converting features into embeddings which are then used by RS systems to improve their performance; (2) LLM Tokens + RS, where LLMs generate tokens that capture nuanced user preferences and item characteristics, this tokenized form can be used for recommendation refinement tasks as in the framework we present here; and (3) LLM as RS, where LLMs directly generate recommendations. Our framework primarily follows the second paradigm, using LLM-generated semantic insights to improve and refine the outputs of any traditional algorithms which provides top N outputs.
+
+Traditional recommendation algorithms like SVD have been the foundation of recommendation systems for years~\cite{koren2009matrix}. While these collaborative filtering approaches effectively capture user-item interactions, they struggle with the ``cold start'' problem and cannot easily incorporate textual user preferences. Our work bridges this gap by leveraging LLMs to enhance these traditional algorithms rather than replacing them.
+
+Recent work by Zhang et al.~\cite{zhang2024llmtreerec} offers an innovative approach to address recommendation challenges using LLMs following the LLM as RS paradigm. Their LLMTreeRec framework tackles the system cold-start problem by structuring items into a hierarchical tree to make LLM-based recommendations more computationally efficient. Like our framework, LLMTreeRec effectively integrates multiple recommendation stages - their user profile modeling, tree traversal, and leaf node recall process forms a chain-like pipeline similar to the recall, ranking, and reranking paradigm. However, while our approach focuses on enhancing and reranking traditional algorithm outputs through similarity scoring through the LLM Tokens + RS paradigm, LLMTreeRec presents a complementary strategy that uses the tree structure to allow LLMs to efficiently navigate large item catalogs. Their approach demonstrates that LLMs can achieve competitive recommendation performance even without training data, showing particular promise for cold-start scenarios.
+
+\subsection{In-context Learning for Recommendations}
+
+Our approach employs in-context learning (ICL), where LLMs learn from demonstrations within the prompt without parameter updating~\cite{brown2020language}. According to Wu et al. \cite{wu2024survey}, prompting approaches for LLMs in recommendation systems have been widely studied, however relatively few studies have explored in-context learning (ICL) for recommendation tasks. Hou et al.~\cite{hou2024large}, while they also explored zero-shot capabilities, demonstrated how in-context learning can enhance recommendation performance by providing demonstration examples. They augmented input interaction sequences by pairing prefixes with corresponding successors to create examples that improved the model's understanding of the recommendation task. 
+
+Sanner et al.~\cite{sanner2023large} conducted a comprehensive evaluation of different in-context learning strategies for recommendation tasks. They collected a novel dataset containing both natural language preference descriptions and item-based preferences from users, allowing for direct comparison between these two modalities. Through extensive experiments with different prompting strategies (completion, zero-shot, and few-shot), they demonstrated that LLMs can provide competitive recommendation performance using only natural language preferences in near cold-start scenarios, without requiring the extensive training data needed for collaborative filtering methods. Their findings that few-shot prompting generally outperforms other strategies and that LLM-based recommendation can provide an "explainable and scrutable language-based preference representation" align with our approach, though we focus on reranking existing recommendations rather than generating them directly. Despite their findings that only using natural language preferences provided superior results as a direct recommender when addressing cold start issues, we eventually transitioned to an item + language preferences approach with few shot prompting. We did this after our initial pilot testing with an early version of the framework as we found this helped the model identify which new movies are of a similar "type" to a user's favorite movies during similarity scoring, realizing that even if the textual description of what a user tends to like aligns with the movie's description, the overall genres might be different, the user might prefer live action opposed to cartoons, etc.
+
+Liu et al.~\cite{liu2023chatgpt} evaluated ChatGPT's performance across five common recommendation tasks (rating prediction, sequential recommendation, direct recommendation, explanation generation, and review summarization) using a prompt construction framework with task descriptions, behavior injection using few shot prompting, and format indicators. Their findings on rating prediction were particularly significant, demonstrating that ChatGPT with few-shot prompting not only outperformed zero-shot approaches but also surpassed traditional recommendation algorithms like Matrix Factorization and Multi-Layer Perceptron in terms of both RMSE and MAE metrics. This provides compelling evidence that in-context learning can effectively transfer knowledge to recommendation tasks without task-specific training. Our approach builds on these insights by designing structured prompts with few-shot examples for similarity scoring tasks, leveraging the demonstrated effectiveness of this technique for recommendation-related judgments.
+
+Remaining questions to be solved for in context learning according to \cite{wu2024survey} involve the selection of demonstration examples and the influence of the number of demonstration examples on recommendation performance. A limitation of our study is we did not choose to thoroughly investigate these questions as our framework is time consuming to execute for an entire dataset of users, and to avoid overwhelming pilot testers by asking them to compare too many recommendation sets than is reasonable.
+
+\subsection{Enhancing Traditional Algorithms with LLMs}
+
+Several researchers have explored combining traditional recommendation algorithms with LLMs. Wei et al.~\cite{wei2024llmrec} proposed LLMRec, a graph augmentation framework that enhances recommender systems through three strategies revolving around enhancing the data fed to the underlying recommender algorithm: reinforcing user-item interaction edges using LLM-based sampling, enhancing item attributes, and conducting user profiling based on historical interactions. Their approach maintains data quality through specialized denoising mechanisms, significantly improving collaborative filtering performance. Similarly, Ren et al.~\cite{ren2024representation} proposed RLMRec, a model-agnostic framework that enhances existing recommenders by aligning LLM-generated semantic representations with collaborative filtering embeddings. Their approach generates user and item profiles using LLMs and maximizes mutual information between these semantic representations and collaborative signals through contrastive or generative alignment techniques, effectively reducing noise in representation learning while maintaining the efficiency of existing recommendation models. While these approaches share conceptual similarities with our work, we focus specifically on reranking traditional algorithm outputs based on text preferences rather than augmenting the underlying collaborative filtering recommendation structure. Researchers may also consider initially using an LLM as RS approach which directly creates recommendations like \cite{sanner2023large} or \cite{zhang2024llmtreerec} to address the cold start problem then transition to a collaborative filtering hybrid approach as more data is collected.
+
+\subsection{LLM-based Description Generation and Similarity Scoring}
+
+Acharya et al.~\cite{AcharyaLLM2023} demonstrated the effectiveness of LLM-generated item descriptions as feature inputs for recommendation systems. They used Alpaca-LoRA to generate movie and book descriptions based solely on titles, converted these to embeddings using BERT, and fed them into a GRU-based sequential recommendation model alongside item ID embeddings. Their experiments showed that systems using LLM-generated descriptions achieved performance comparable to those using web-scraped descriptions across multiple evaluation metrics. Our framework builds on this concept by using LLMs to generate movie descriptions when official ones are unavailable, similarly leveraging these descriptions to enhance recommendation quality. 
+
+Wang and Lim~\cite{wang2023zero} explored using LLMs for zero-shot next-item recommendation by designing prompts to generate user preference descriptions from rated items. While they ultimately use these preferences differently (their approach uses preferences to guide GPT-3 in making direct recommendations, ours uses preferences for similarity scoring to re-rank traditional algorithm recommendations), the core technique of preference extraction is highly similar. Their approach demonstrates how LLMs can understand and articulate user preferences without explicit training on recommendation tasks. Our work builds upon this concept by automatically generating preference summaries for users in the MovieLens dataset based on their rated movies, which are then leveraged for similarity scoring and recommendation refinement.
+
+Maragheh et al.~\cite{yousefi2024llm} utilized LLMs to generate aspect embeddings for refining recommendations by providing contextual information and aligning with user intentions. This approach inspired our similarity scoring system, though we focus on direct similarity computation between user preferences and movie descriptions rather than aspect embedding generation.
+
+\subsection{Addressing Biases and Evaluation Challenges}
+
+The literature identifies several challenges in LLM-enhanced recommendation systems. These include position bias, where LLMs prioritize items in the top order~\cite{wu2024survey}, popularity bias, and fairness issues related to sensitive attributes. We address position biasing by considering each movie independently, this prevents the LLM from providing more or less attention to any specific movie. Our system also attempts to mitigate popularity bias by incorporating normalized popularity scores, popularity preferences, rating preferences, and release date preferences into the similarity calculation. Finally to address the fairness bias, we provide all information necessary in a single prompt for the LLM to make an informed decision, reducing it's dependency on any pretrained knowledge that it may possess for any specific movie.
+
+In addition, researchers have noted challenges in controlling LLM outputs and defining appropriate evaluation metrics. Wang et al.~\cite{wang2023rethinking} demonstrated that suitable demonstrations can effectively control the output format and content of LLMs, which directly improves recommendation evaluation metrics. Following this insight, we address these challenges by using carefully designed few-shot prompts, a retry mechanism, and regex expression searching to extract similarity scores and employing both hit rate and cumulative hit rate metrics alongside perceived quality assessments.
+
+Our work falls under the category of Generative LLMs in Non-tuning – In-context Learning as defined by \cite{wu2024survey}, as we provide demonstration examples in our prompting, following the few-shot learning strategy. This approach allows us to leverage pre-trained LLMs without fine-tuning while still achieving personalized recommendations that incorporate users' textual preferences.
+
+\section{Methodology}
+\subsection{Preliminaries}
+This research proposes a framework that leverages the capabilities of Large Language Models (LLMs) to enhance recommendation systems by refining the recommendations of traditional recommendation algorithms such as SVD and SVD++. This approach builds on the foundational work of Acharya et al. \cite{AcharyaLLM2023} and Maragheh et al. \cite{yousefi2024llm}, who demonstrated the potential of LLMs in generating item descriptions and aspect augmentations, respectively. The methodology is structured as follows and is illustrated in Figure \ref{fig:flowchart}.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{images/LLM_Framework_Flowchart.png}
+    \caption{Framework Architecture Flowchart showing data generation and recommendation paths}
+    \label{fig:system-flowchart}
+\end{figure*}
+
+
+\noindent
+\textbf{Data Preparation.}
+In our hit rate experiment where we generate user preference profiles for all dataset users, we utilized the MovieLens Latest Small (100k dataset)~\cite{harper2015movielens}, which provides a comprehensive set of user ratings for recommendations. The stable 100k version from 1998 is outdated and uses a file format not easily recognized by modern libraries. This is why we chose the Latest Small Version (last updated 9/2018) that is more up to date with current information (i.e, more likely to contain accurate IMDb links), contains newer and relevant movies, and is fully supported by the Surprise library, despite its disclaimer that it should not be used for research. This dataset's CSVs are loaded into pandas DataFrames, and we create mapping dictionaries between MovieLens Movie IDs and IMDb IDs using the \path{links.csv} included in the MovieLens dataset. This facilitates seamless integration with IMDb data, enabling the retrieval of additional movie information, including plots and reviews if needed. For our study, using Latest Small was necessary for fully comparing hit rate between LLM Enhanced and their corresponding base traditional algorithms, as generating similarity scores and user preference profiles for all users in the full MovieLens dataset would be unfeasible due to local resource capacity and the computational complexity of LLMs. However, in our initial piloting experiment where we measured the perceived quality of an earlier version of our system, we used the full MovieLens 32M dataset to generate the initial recommendations with SVD. 
+
+\noindent
+\textbf{Traditional Recommendation Algorithms.}
+We employ both SVD and SVD++ algorithms to generate initial movie recommendations. SVD and SVD++ are matrix factorization techniques that uncover latent factors in user-item interactions, making them effective for handling sparse data~\cite{koren2009matrix}. For calculating hit rate, the algorithms are trained on the MovieLens 100k dataset, and we compare their performance with our LLM-enhanced versions using hit rate and cumulative hit rate metrics. For measuring the perceived quality, we utilized the full MovieLens 32M dataset to generate the initial recommendations which were then enhanced before being fed to the pilot testers.
+
+\noindent
+\textbf{LLM-enhanced Framework Description Generation.}
+The integration of generating descriptions is inspired by Acharya et al. \cite{AcharyaLLM2023}. We use LLMs to generate movie descriptions through few-shot prompting when official IMDb descriptions can't be retrieved from IMDb. This approach reduces reliance on web scraping and mitigates personal biases in descriptions, aligning with Acharya et al.'s \cite{AcharyaLLM2023} findings that LLM-generated descriptions can achieve performance close to manually curated ones. 
+
+Our system has evolved from our previous implementation when we first proposed this framework using Microsoft's Phi-3-mini-4k-instruct-gguf model to now employing the more powerful Phi-4-Q6\_K quantization model. This upgrade allows the model to run efficiently on an RTX 4090 Laptop GPU with 16 GB VRAM, providing a good balance between model capability and resource constraints while improving recommendation quality.
+
+We also implement LLM fuzzy matching to search the IMDB Cinemagoer API for outdated or broken IMDB IDs, addressing a common issue in the MovieLens dataset where some IDs are no longer valid. This reduces the amount of cases where descriptions can't be found. The system can also match movies that users want to rate by searching the IMDB database, then converting matches to MovieLens movie IDs.
+
+An example of the description generation prompt can be seen in Figure \ref{fig:Description Generation Prompt}. Few-shot prompting allows the model to learn from a limited number of examples, making it adaptable to new tasks with minimal data. All few shot example movie descriptions in the example prompts shown are retrieved from IMDb plot summaries or trailer descriptions. We construct prompts for the LLM using few-shot examples, guiding the model in generating logically sound if not accurate descriptions depending on the training set of the model.
+
+% Description Generation Prompt
+\begin{figure*} \begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize 
+
+\textbf{System Prompt: }
+
+You are a helpful assistant that generates concise movie descriptions. Do not use newlines in your response. The examples provided are for context only and should not appear in your output. Return only the description.
+
+\textbf{User Prompt:}
+
+Example 1:
+Movie title: Inception
+Description: A thief who steals corporate secrets through dream-sharing technology is tasked with implanting an idea into a CEO's mind.
+
+Example 2:
+Movie title: The Matrix
+Description: A computer hacker discovers his reality is an illusion and joins rebels to fight its controllers.
+
+Generate a description for this movie:
+
+Movie title: Interstellar
+
+Description:
+\end{quote} 
+\end{mdframed} 
+\caption{Description Generation Prompt with example descriptions retrieved from IMDB} 
+\label{fig:Description Generation Prompt}
+\end{figure*}
+
+\subsection{Similarity Scoring and Personalized Recommendations}
+\label{sec:similar_scoring}
+Inspired by Maragheh et al. \cite{yousefi2024llm}, our system uses LLMs to generate similarity scores between user preferences and movie titles, followed by their descriptions. It leverages an LLM to evaluate the similarity between a user's preferences and a set of movie descriptions of length \( N \times T \times 10^M \), sorted by the highest rating to the lowest that the base algorithm (SVD or SVD++) predicts a user will rate a movie based on their past ratings. \( N \) is the final number of movies to recommend to the user while \( M \) can be modified for more accurate results, at the cost of performance. \(T\) is a tuning factor in the range (0, 1] for more fine grained control. If we wanted a search count of 100 for an N = 5, the search count equation would intuitively be \(5 * 0.2 * 10^2\), where \(T\) = 0.2 and \(M\) = 2.
+
+In our testing, we used a search count of 100 for each N (N@1, N@5, and N@10), meaning we select the top 100 base recommendations for each user, assign a similarity score to each, and then rerank them according to those scores. The top \( N \) movies with the highest similarity scores are returned as personalized recommendations. This approach builds on Maragheh et al.'s \cite{yousefi2024llm} use of LLMs to generate aspect embeddings that refine recommendation systems by providing contextual information and aligning recommendations with user intention.
+
+Our similarity scoring process incorporates several important factors beyond just text preferences and movie descriptions:
+
+\begin{itemize}
+    \item \textbf{IMDb Ratings:} When available, each movie's IMDb rating (on a scale of 0-10) is included in the prompt.
+    \item \textbf{Popularity Scores:} A normalized popularity score (0-100) derived from IMDb vote counts is included when available. This score is calculated using linear interpolation where 1 million votes corresponds to a score of 100 as follows. 
+    \begin{equation}
+        \text{normalized\_score} = \min(100, \max(0, 100 \times \frac{\text{votes}}{1{,}000{,}000}))
+    \end{equation}.
+    \item \textbf{Rating Preferences:} For users who tend to favor highly-rated content, we conditionally include the statement "I prefer movies with high IMDb ratings" in their preference profile.
+    \item \textbf{Popularity Preferences:} Similarly, for users who gravitate toward mainstream titles, we include "I prefer popular/trending movies" in their profile.
+    \item \textbf{Release Date Range:} A preferred release date range is determined based on the user's rated movies, rounding down to the first year of the decade for the minimum year and up to the first year of the next decade (or current year, whichever is smaller) for the maximum year.
+\end{itemize}
+
+Both rating and popularity preferences are determined automatically during the generation of user preference profiles. If the average IMDb rating of a user's favorite movies is >= 7.0/10, the rating preference is enabled. Similarly, if the average normalized popularity score is >= 80/100, the popularity preference is enabled. These elements appear conditionally in the LLM prompt only when relevant to that particular user's profile. These factors were implemented to address the initial criticism during pilot testing of obscure titles being recommended to users who preferred more more mainstream titles.
+
+Our framework can generate these preference profiles for all users in the dataset automatically based on their favorite movies, which is how we scale to use the framework on an entire dataset. Alternatively, users can specify all their preferences manually if desired. Due to performance considerations, the framework should be applied to users on an as-needed basis, allowing streaming service platforms to personalize recommendations for users who wish to provide their preferences.
+
+\noindent
+\textbf{Similarity Scoring Prompt.}
+To compute the similarity between a user's preferences and a movie's description, we construct a prompt that provides the user's input and the movie's details to the LLM and ask the LLM to return a similarity score between -1.0 and 1.0, where -1.0 means the movie goes completely against the user's preferences, 0 means neutral or not enough information, and 1.0 is a perfect match. We use regex expression searching to extract these similarity scores from LLM responses, ensuring consistent output format and stability. The prompt includes few-shot examples to guide the LLM's response, and is specifically formatted to accommodate the Phi-4 model's input structure with properly formatted system and user messages. The combination between few shot examples and regex expression searching allows even small models to quickly learn the task and provide accurate responses. An example of the prompt is seen as follows in Figure \ref{fig:Sim_Scoring_Prompt} without the special Phi-4 model formatting for generalization. 
+
+\begin{figure*} 
+\begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize 
+
+% System Message (For Phi-4-Q6_K model this would be wrapped with special tags)
+\textbf{System:}
+
+You are a movie recommendation assistant. Your task is to evaluate how well a movie description aligns with a user's stated preferences and their favorite movies. Always respond with a number between -1.0 and 1.0, where:
+-1.0 means the movie goes completely against their preferences,
+0 means neutral or there isn't enough information,
+1.0 is a perfect match. You must respond with only the number, without any additional text or formatting under all circumstances.
+
+\textbf{User:}
+
+Example 1:
+
+User input: I love science fiction with deep philosophical themes. 
+
+I prefer movies with high IMDb ratings.
+
+User's favorite movies:
+
+Movie title: The Matrix (1999)
+
+Movie title: Blade Runner (1982)
+
+Movie title: Interstellar (2014)
+
+Preferred Release Date Range: I prefer movies released between 1980 and 2020.
+
+New movie to evaluate:
+
+Movie title: Inception (2010)
+
+IMDb Rating: 8.8/10
+
+Popularity Score: 93/100
+
+Movie description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+0.9
+
+Example 2:
+
+User input: I enjoy light-hearted comedies with a lot of humor. 
+
+I prefer popular/trending movies.
+
+User's favorite movies:
+
+Movie title: The Hangover (2009)
+
+Movie title: Superbad (2007)
+
+Movie title: Step Brothers (2008)
+
+Preferred Release Date Range: I prefer movies released between 2000 and 2010.
+
+New movie to evaluate:
+
+Movie title: The Dark Knight (2008)
+
+IMDb Rating: 9.0/10
+
+Popularity Score: 98/100
+
+Movie description: Set within a year after the events of Batman Begins (2005), Batman, Lieutenant James Gordon, and new District Attorney Harvey Dent successfully begin to round up the criminals that plague Gotham City, until a mysterious and sadistic criminal mastermind known only as "The Joker" appears in Gotham, creating a new wave of chaos.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+-0.7
+
+Example 3:
+
+User input: I am fascinated by historical documentaries.
+
+User's favorite movies:
+
+Movie title: They shall not grow old (2018)
+
+Movie title: Apollo 11 (2019)
+
+Movie title: 13th (2016)
+
+Preferred Release Date Range: I prefer movies released between 2010 and 2020.
+
+New movie to evaluate:
+
+Movie title: The Lord of the Rings: The Fellowship of the Ring (2001)
+
+IMDb Rating: 8.8/10
+
+Popularity Score: 95/100
+
+Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+-0.5
+
+Now, respond to the following prompt:
+
+User input: I am drawn to science fiction and fantasy stories that are well written.
+
+I prefer movies with high IMDb ratings.
+
+I prefer popular/trending movies.
+
+User's favorite movies:
+
+Movie title: The Lord of the Rings: The Two Towers (2002)
+
+Movie title: Rogue One: A Star Wars Story (2016)
+
+Movie title: WALL·E (2008)
+
+Preferred Release Date Range: I prefer movies released between 2000 and 2020.
+
+New movie to evaluate:
+
+Movie title: Interstellar (2014)
+
+IMDb Rating: 8.6/10
+
+Popularity Score: 91/100
+
+Movie description: When Earth becomes uninhabitable in the future, a farmer and ex-NASA pilot, Joseph Cooper, is tasked to pilot a spacecraft, along with a team of researchers, to find a new planet for humans.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+\end{quote} 
+\end{mdframed} 
+\caption{Similarity Scoring Prompt with preference statements, preferred release range, favorite movies, IMDb ratings and popularity scores} 
+\label{fig:Sim_Scoring_Prompt}
+\end{figure*}
+
+\section{Experiments and Results}
+\subsection{Implementation Details}
+The proposed system is designed to work in three different modes: development, production, and generation of data. Development mode works with a locally running LLM model that exposes an OpenAPI-compatible API. In this mode, we tested with a more powerful \verb|Phi-4-Q6_K| quantization model compared to our previous proposal which used Phi-3-mini-4k-instruct. The Q6\_K quantization allows the model to run on an RTX 4090 Laptop GPU with 16 GB VRAM. The production mode allows the system to use even higher quality LLM models by outsourcing the LLM computation to OpenAI, utilizing its current small yet fast, and cheap GPT-4o-mini model, though we recommend local execution due to latency and the sheer number of api calls made by the system.
+
+Generate data mode is designed to retrieve data such as movie descriptions from IMDb through the Cinemagoer library with descriptions being saved every 100 movies to avoid loss of progress. If a description can't be found for a movie, for example, because of an outdated MoveLens ID to IMDb ID link in the MovieLens dataset, we will generate a description for the movie using an LLM. We implemented fuzzy matching to search the IMDB Cinemagoer API for movies with outdated or broken IMDB IDs, and the system can also find data for movies the user wants to rate by searching the IMDB database and converting matches to MovieLens movie IDs.
+
+We currently handle description generation locally due to the sheer scale of the dataset and to reduce the number of calls to OpenAI for cost savings. Our system caches retrieved and generated movie descriptions to optimize performance. Our caching strategy reduces the need for repeated API calls to IMDb, and the OpenAI-compatible API, improving system efficiency.
+
+By building on the methodologies of \cite{AcharyaLLM2023,yousefi2024llm}, our proposed framework of LLM-enhanced traditional algorithm recommendations demonstrates the potential of LLMs to enhance and build upon traditional recommendation system algorithms such as SVD and SVD++, providing personalized and context-aware movie suggestions that align with user preferences. Our work continues the trend of integrating LLMs at various stages of the recommendation process, from description generation to similarity scoring, ultimately aiming to tailor recommendations based on user preferences and intentions.
+ 
+\subsection{Comparison using Hit Rate}
+
+%\subsection{Comparison using Cumulative Hit Rate}
+\smallskip
+\noindent
+Using the latest version of our system, we generated preference profiles automatically for all users in the MovieLens Latest Small Dataset based on their favorite movies, incorporating normalized popularity scores, rating preferences, and release date preferences. We then calculated hit rates for both traditional algorithms (SVD and SVD++) and their LLM-enhanced versions. We tested with N@1, N@5, and N@10 for both hit rate and cumulative hit rate, recognizing that the first ten or so recommendations are the most crucial for user satisfaction. It is key to mention that we ensure we do not include the left out test set movie for each user in their user preference profile that is provided to the LLM, as we felt this may count as "cheating the result" when asking the LLM to rate the similarity of that movie tot the user. Our results, shown in Table \ref{tab:svd_comparison}, \ref{tab:svdpp_comparison}, and \ref{tab:averages} demonstrate significant improvements with the LLM-enhanced approach.
+
+\begin{table*}
+\centering
+\caption{SVD LLM vs. SVD Comparison}
+\label{tab:svd_comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD LLM} & \textbf{SVD} & \textbf{Improvement Ratio} & \textbf{Search Count} \\
+\midrule
+Hit Rate N@1 & \textbf{0.006011} & 0.000000 & Undefined & 100 \\
+Hit Rate N@5 & \textbf{0.013661} & 0.004918 & 2.777755 & 100 \\
+Hit Rate N@10 & \textbf{0.017486} & 0.009290 & 1.882239 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@1 & \textbf{0.009551} & 0.000000 & Undefined & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@5 & \textbf{0.021968} & 0.006686 & 3.285672 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@10 & \textbf{0.026743} & 0.013372 & 1.999925 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}
+\centering
+\caption{SVD++ LLM vs. SVD++ Comparison}
+\label{tab:svdpp_comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD++ LLM} & \textbf{SVD++} & \textbf{Improvement Ratio} & \textbf{Search Count} \\
+\midrule
+Hit Rate N@1 & \textbf{0.007104} & 0.001639 & 4.334350 & 100 \\
+Hit Rate N@5 & \textbf{0.012568} & 0.007104 & 1.769144 & 100 \\
+Hit Rate N@10 & \textbf{0.016940} & 0.012022 & 1.409083 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@1 & \textbf{0.011461} & 0.001910 & 6.000524 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@5 & \textbf{0.021012} & 0.010506 & 2.000000 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@10 & \textbf{0.026743} & 0.018147 & 1.473687 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\caption{Performance Averages Across Different N Values}
+\label{tab:averages}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD} & \textbf{SVD LLM} & \textbf{SVD++} & \textbf{SVD++ LLM} \\
+\midrule
+Average Hit Rate & 0.004736 & \textbf{0.012386} & 0.006922 & 0.012204 \\
+Average Cumulative Hit Rate & 0.006686 & 0.019421 & 0.010188 & \textbf{0.019739} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The results show that our LLM-enhanced approach consistently outperforms the base algorithms. For SVD, we see significant improvements across all N values, with the most dramatic increase at N@1 where the base SVD had zero hits. Similarly, for SVD++, the LLM-enhanced version shows substantial gains, particularly for the cumulative hit rate where we observe a six-fold improvement at N@1. These results demonstrate that the LLM framework provides better understanding of individual users' preferences, resulting in more personalized recommendations.
+
+%\changeAD{reviewed up to this 12/02 3:32 pm}
+
+\subsection{Comparison Using Measured Perceived Quality}
+
+We performed our initial pilot testing on the MovieLens 32M dataset. In this testing, in order to find out the quality of the recommendations through experiments, we reached out to several diverse individuals, male and female, with an age range of 20-60 years old. We asked them to rate their favorite movies, requesting a minimum of 3 (the same amount Netflix requires when creating a user profile), with no maximum limit. We used responses from 7 users -- each of whom provided a range of 3-12 movies, while an actual range of 3-10 movies was used due to reasons like some favorite movies not being in the MovieLens 32M dataset due to being released in the current year. We additionally asked users to describe their user preferences. An example response we took from a test user can be seen in Table \ref{tab:user_response}.
+
+%\subsection{Example User Response}
+\begin{table} 
+\begin{minipage}{\linewidth}
+\centering 
+\caption{Example User Response: Movies and Ratings} 
+\label{tab:user_response} 
+\begin{tabular}{l c} 
+\toprule 
+\textbf{Movie Title} & \textbf{Rating} \\ 
+\midrule 
+The Lord of the Rings: The Two Towers & 5 \\ 
+Rogue One: A Star Wars Story & 5 \\ 
+WALL\textperiodcentered E & 5 \\ 
+\bottomrule 
+\end{tabular}
+
+\vspace{1ex}
+\begin{mdframed} 
+\textbf{User Preferences: }
+\begin{quote}
+    "I am drawn to science fiction and fantasy stories that are well written."
+\end{quote}
+\end{mdframed}
+\end{minipage}
+\end{table}
+
+For this initial pilot testing with an earlier version of our system using the Phi-3 model, we were interested in whether users preferred LLM-enhanced recommendations over traditional algorithm-based ones. We generated two sets of recommendations total with both methods, using the full training set of each survey test user. After generation, the raw recommendations for each user were directly presented to them anonymously, meaning they did not know which method produced which recommendations. The question posed to each pilot tester was "Please let us know which set of recommendations A. or B. is best adapted to your tastes and preferences based on the information you gave."
+
+\emph{5 out of 7 users anonymously preferred the recommendations provided by the LLM-enhanced method while 2 preferred those from the original algorithm}. A sample set of recommendations is shown in Figure \ref{tab:user_preferences} based on the user response shown in Table \ref{tab:user_response}\footnote{More example recommendations for various users can be found at \url{https://github.com/Windz-GameDev/Recommendation-Systems-Research} in the Example Inputs and Outputs section.}.
+
+Users who preferred traditional algorithm recommendations noted that it provided famous, recognizable titles like Citizen Kane (1941) or The Godfather (1972), while the LLM-enhanced method would recommend titles that aligned with their stated preferences description-wise but sometimes represented different media types than their favorite movies (e.g., recommending Japanese anime to fans of classic 80s movies). This insight led to our current implementation, which incorporates favorite movies, popularity preferences, and rating preferences into the similarity calculation to provide more contextually appropriate recommendations.
+
+% \noindent
+% \textbf{Experiments.} 
+To validate our approach during piloting, we compared the performance of our proposed LLM-enhanced recommendation system against the traditional SVD algorithm implemented in the Surprise Python library~\cite{hug2020surprise} on the MovieLens 32M dataset. \cite{harper2015movielens} The two sets of recommendations were provided to seven users of our system and their preferences are reported here in Table \ref{tab:user_preferences}.
+
+%to quantify improvements in recommendation accuracy and personalization using the metrics cumulative hit rate and measuring the perceived quality. 
+
+\begin{table} \centering \caption{User Preference Between Recommendation Systems} \label{tab:user_preferences} \begin{tabular}{l l} \toprule \textbf{User ID} & \textbf{Preferred Recommendation System} \\ 
+\midrule User 1 & Ours (LLM-enhanced) \\ User 2 & Traditional Algorithm \\ User 3 & Ours (LLM-enhanced) \\ User 4 & Ours (LLM-enhanced) \\ User 5 & Traditional Algorithm \\ User 6 & Ours (LLM-enhanced) \\ User 7 & Ours (LLM-enhanced) \\ \bottomrule \end{tabular} \end{table}
+ 
+\begin{figure*} \begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize
+
+\textbf{System Prompt:}
+
+You are a helpful assistant that generates comprehensive user preference summaries based on multiple movies that a user has rated. Ensure the preferences are written in the first person without newlines. The instructions and examples exist to help you understand the context and how to format your response, do not include them in your response. You should match the format of the user preferences responses in the examples exactly with nothing else in your response.
+
+\textbf{User Prompt:}
+
+Example 1:
+
+Movies:
+
+1. Movie title: The Shawshank Redemption
+
+   Description: A banker convicted of uxoricide forms a friendship over a quarter century with a hardened convict, while maintaining his innocence and trying to remain hopeful through simple compassion.
+   
+   User rating: 5.0
+
+2. Movie title: The Godfather
+
+   Description: The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.
+   
+   User rating: 4.5
+
+User preferences: I enjoy movies with deep character development, themes of redemption, and complex family dynamics.
+
+Example 2:
+
+Movies:
+
+1. Movie title: The Matrix
+
+   Description: A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.
+   
+   User rating: 4.5
+
+2. Movie title: Inception
+
+   Description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.
+   
+   User rating: 4.0
+
+User preferences: I love movies with mind-bending plots, action-packed sequences, and philosophical themes.
+
+Now, based on the following movie titles, descriptions, and ratings, using 60 tokens or less, generate a comprehensive user preference summary in the first person, without newlines:
+
+[User's Rated Movies and Descriptions]
+\end{quote} 
+\end{mdframed} 
+\caption{User Preference Summary Prompt with example descriptions from IMDb} 
+\label{fig:User_Preference_Generation}
+\end{figure*}
+
+
+\begin{figure}
+    %\centering
+    \begin{mdframed} 
+    Top 10 recommendations according to SVD:\\
+Planet Earth II (2016), 
+Planet Earth (2006), 
+Band of Brothers (2001), 
+The Civil War (1990), 
+The Blue Planet (2001), 
+Cosmos, 
+Cosmos: A Spacetime Odyssey
+Blue Planet II (2017), 
+Twelve Angry Men (1954), 
+Shawshank Redemption, The (1994). \\
+
+Top 10 recommendations according to our LLM-enhanced:\\
+Dune (2021), 
+Inception (2010), 
+Cosmos: A Spacetime Odyssey, 
+Attack On Titan (2013), 
+Black Mirror, 
+Firefly (2002), 
+Avengers: Infinity War - Part II (2019), 
+Avengers: Infinity War - Part I (2018), 
+Over the Garden Wall (2013), 
+Infinity Train (2016). 
+\end{mdframed} 
+    \caption{Sample recommendations generated by SVD and our proposed LLM-enhanced recommender systems. The particular user who received these recommendations chose the LLM-enhanced ones anonymously.}
+    \label{fig:user-prefs}
+\end{figure}
+
+\section{Conclusion and Future Work}
+In this paper, we have proposed a novel LLM-enhanced recommendation system that uses SVD and SVD++ recommendations as a foundation and fine-tunes them using a scoring mechanism provided to an LLM. Our hit rate metrics demonstrate consistent improvements across different N values, and our initial user study with an earlier Phi-3 version showed that $71.5\%$ of users preferred LLM-enhanced recommendations. Therefore, the answer to the research question asked in the title of the paper is a resounding \textit{yes}.
+
+Our current implementation already incorporates several key features we identified as important through our testing:
+\begin{enumerate}
+  \item Automatic generation of user preference profiles based on favorite movies
+  \item Integration of normalized popularity scores to recommend more recognizable titles
+  \item Consideration of rating preferences to highlight quality content
+  \item Release date preferences to match users' preferred time periods
+  \item Regex expression searching to extract similarity scores accurately
+  \item Few-shot prompting to ensure consistent outputs even for smaller models
+\end{enumerate}
+
+Our shift from Phi-3-mini to Phi-4-Q6\_K quantization has enabled more sophisticated language understanding while still running efficiently on a RTX 4090 Laptop GPU with 16 GB VRAM. The LLM fuzzy matching capability for handling outdated or broken IMDB IDs has significantly improved the robustness of our system.
+
+Future work will focus on further refining the automatic preference generation algorithm and optimizing the system for application on streaming platforms. For similarity scoring, we could implement parallelization across multiple GPUs to evaluate multiple user-movie pairs simultaneously, and batch processing to compute multiple movies' similarity scores for a single user in one LLM API call, significantly reducing API overhead. For example, when calculating hit rates, we could batch 50-100 movie evaluations per user into a single prompt. Similarly, for user preference profile generation, we could parallelize the process across multiple workers to generate multiple users' preference profiles simultaneously. Additionally, caching strategies could be expanded to store intermediate similarity scores for frequently occurring user-movie combinations.
+
+Additionally, researchers may experiment with collecting more user data like favorite actors and directors, favorite genres, etc, and include this additional data in movie descriptions during similarity score generation for even more nuanced understanding. Overall, while scalable for the purposes of calculating hit rate for an entire dataset of users, due to LLM computational requirements, the framework is designed to be applied on an as-needed basis, allowing streaming service platforms to personalize recommendations for users who wish to provide their preferences while understanding individual users better through the LLM framework.
+
+%\changeAD{AD will write}
+
+\bibliographystyle{acm}
+\bibliography{references}
+
+
+%\input{www_review}
+
+\end{document}
+%\documentclass[12pt]{article}
+\documentclass[sigconf]{acmart}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    }
+
+\urlstyle{same}
+\usepackage{float}
+\usepackage{url}
+%\usepackage[backend=biber,style=alphabetic]{biblatex}
+%\addbibresource{references.bib}
+
+\usepackage{booktabs}
+\usepackage{mdframed} 
+\usepackage{relsize}
+
+\usepackage{enumitem}
+
+\newcommand{\changeAD}[1]{\textcolor{red}{AD: #1}}
+
+%\date{7/22/2024}
+
+%%
+%% \BibTeX command to typeset BibTeX logo in the docs
+\AtBeginDocument{%
+  \providecommand\BibTeX{{%
+    Bib\TeX}}}
+
+%% Rights management information.  This information is sent to you
+%% when you complete the rights form.  These commands have SAMPLE
+%% values in them; it is your responsibility as an author to replace
+%% the commands and values with those provided to you when you
+%% complete the rights form.
+\setcopyright{acmlicensed}
+\copyrightyear{2024}
+\acmYear{2024}
+\acmDOI{XXXXXXX.XXXXXXX}
+
+%% These commands are for a PROCEEDINGS abstract or paper.
+\acmConference[WWW '25]{The Web Conference}{April 28 - May 02,
+  2025}{Sydney, Australia}
+%%
+%%  Uncomment \acmBooktitle if the title of the proceedings is different
+%%  from ``Proceedings of ...''!
+%%
+%%\acmBooktitle{Woodstock '18: ACM Symposium on Neural Gaze Detection,
+%%  June 03--05, 2018, Woodstock, NY}
+\acmISBN{978-1-4503-XXXX-X/18/06}
+
+\usepackage{tikz} % Add this package for flowcharts \usetikzlibrary{shapes.geometric, arrows}
+\usetikzlibrary{positioning}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10002951.10003317.10003347.10003350</concept_id>
+       <concept_desc>Information systems~Recommender systems</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Information systems~Recommender systems}
+
+\tikzstyle{startstop} = [rectangle, rounded corners, minimum width=4cm, minimum height=1cm, text centered, draw=black, fill=red!30, inner sep=0.3cm]
+\tikzstyle{process} = [rectangle, minimum width=4cm, minimum height=1cm, text centered, draw=black, fill=orange!30, inner sep=0.3cm]
+\tikzstyle{arrow} = [thick,->,>=stealth]
+
+\begin{document}
+
+\title{A Language-Driven Framework for Improving Personalized Recommendations: Merging LLMs with Traditional Algorithms}
+%\author{Aaron Goldstein, Ayan Dutta}
+
+\author{Aaron Goldstein}
+%\authornote{Both authors contributed equally to this research.}
+\email{n01421643@unf.edu}
+\affiliation{%
+  \institution{University of North Florida}
+  \city{Jacksonville}
+  \state{Florida}
+  \country{USA}
+}
+
+%\orcid{1234-5678-9012}
+\author{Ayan Dutta}
+%\authornotemark[1]
+\email{a.dutta@unf.edu}
+\affiliation{%
+  \institution{University of North Florida}
+  \city{Jacksonville}
+  \state{Florida}
+  \country{USA}
+}
+
+
+\renewcommand{\shortauthors}{Goldstein and Dutta}
+
+%%
+%% The abstract is a short summary of the work to be presented in the
+%% article.
+\begin{abstract}
+Traditional recommendation algorithms are not designed to provide personalized recommendations based on user preferences provided through text, e.g., "I like movies which take me into a dreamland". Large Language Models (LLMs) have emerged as one of the most promising tools for natural language processing in recent years. This research proposes a framework that leverages the capabilities of LLM to enhance movie recommendation systems by refining the recommendations of traditional recommendation algorithms and integrating them with language-based user preference inputs. We employ Singular Value Decomposition (SVD) and SVD++ algorithms to generate initial movie recommendations. The base algorithms are implemented by the Surprise Python library and trained on the MovieLens 100k dataset. We compare the base algorithms' performance with our LLM-enhanced versions to quantify improvements in recommendation quality and personalization by measuring hit rates, cumulative hit rates, and perceived quality -- in our initial pilot testing with an earlier version of the system, $71.5\%$ of users preferred our LLM-enhanced recommendations over the traditional ones. Our framework generates preference profiles for all users in the dataset automatically based on their favorite movies, though users can also specify preferences manually which is recommended for optimal results. Using the automated approach of generating preference profiles, our framework surpassed standard SVD and SVD++ for every hit rate metric. Our framework allows the recommendation system to improve its understanding of individual users, providing personalization on an as-needed basis for streaming service platforms to provide their users custom tailored recommendations.
+\end{abstract}
+
+\keywords{Recommender systems, Large Language model, User preference, Web Scraping}
+
+\maketitle
+\section{Introduction}
+%\changeAD{AD will write}
+%show examples from Amazon Alexa.
+Recommendation systems are integral parts of modern-day online experiences ranging from e-commerce to OTT platforms~\cite{aggarwal2016introduction,chiang2024recommender,roy2022systematic}. Given the recent rise in capabilities of Large Language Models (LLMs), we can utilize them to understand user preferences before providing final recommendations to customers. Certain companies such as Amazon are already giving such options on their Fire devices showing suggestions like "Show me Meryl Streep romance movies". Despite the already exciting number of studies that focus on combining LLMs and Rec Systems, extensively reviewed by \cite{wu2024survey}, there is still much room for further advancement and innovation.
+
+To incorporate such text-based user preferences into the final recommendations, in this paper, we propose using an LLM-based architecture. The LLM is used in four key places: 1) in movie information retrieval through fuzzy matching when IMDb IDs are outdated or broken, 2) if movie descriptions are not available online after retrieval attempts, we use the LLM to generate concise descriptions, 3) in automatic generation of user preference profiles when users cannot or choose not to provide preferences manually, and 4) in similarity scoring of titles recommended by existing state-of-the-art SVD-based recommendations~\cite{koren2009matrix}. The similarity scoring system helped us to fine-tune the SVD recommendations and provide users with better-quality recommendations. The scoring system is designed by us and provided to the LLM as an example to begin with. The LLM learned from those examples and provided recommendations based on the scoring system (see Section \ref{sec:similar_scoring}). In our initial pilot test with an earlier Phi-3 model, when providing these LLM-enhanced recommendations along with SVD ones anonymously to 7 users, 5 of them chose our proposed LLM-enhanced ones over the traditional SVD-based ones. This shows the promise of such fine-tuned recommendation systems that integrate textual user preferences.  
+
+\section{Related Work}
+
+Recent advancements in Large Language Models (LLMs) have created new opportunities for enhancing recommendation systems. This section reviews relevant literature on LLM integration with traditional recommendation algorithms, focusing on approaches that align with our research direction.
+
+\subsection{LLMs for Recommendation Systems}
+
+As outlined by Wu et al.~\cite{wu2024survey}, LLM-based recommendation approaches can be categorized into three main paradigms: (1) LLM Embeddings + RS, where LLMs serve as feature extractors, converting features into embeddings which are then used by RS systems to improve their performance; (2) LLM Tokens + RS, where LLMs generate tokens that capture nuanced user preferences and item characteristics, this tokenized form can be used for recommendation refinement tasks as in the framework we present here; and (3) LLM as RS, where LLMs directly generate recommendations. Our framework primarily follows the second paradigm, using LLM-generated semantic insights to improve and refine the outputs of any traditional algorithms which provides top N outputs.
+
+Traditional recommendation algorithms like SVD have been the foundation of recommendation systems for years~\cite{koren2009matrix}. While these collaborative filtering approaches effectively capture user-item interactions, they struggle with the ``cold start'' problem and cannot easily incorporate textual user preferences. Our work bridges this gap by leveraging LLMs to enhance these traditional algorithms rather than replacing them.
+
+Recent work by Zhang et al.~\cite{zhang2024llmtreerec} offers an innovative approach to address recommendation challenges using LLMs following the LLM as RS paradigm. Their LLMTreeRec framework tackles the system cold-start problem by structuring items into a hierarchical tree to make LLM-based recommendations more computationally efficient. Like our framework, LLMTreeRec effectively integrates multiple recommendation stages - their user profile modeling, tree traversal, and leaf node recall process forms a chain-like pipeline similar to the recall, ranking, and reranking paradigm. However, while our approach focuses on enhancing and reranking traditional algorithm outputs through similarity scoring through the LLM Tokens + RS paradigm, LLMTreeRec presents a complementary strategy that uses the tree structure to allow LLMs to efficiently navigate large item catalogs. Their approach demonstrates that LLMs can achieve competitive recommendation performance even without training data, showing particular promise for cold-start scenarios.
+
+\subsection{In-context Learning for Recommendations}
+
+Our approach employs in-context learning (ICL), where LLMs learn from demonstrations within the prompt without parameter updating~\cite{brown2020language}. According to Wu et al. \cite{wu2024survey}, prompting approaches for LLMs in recommendation systems have been widely studied, however relatively few studies have explored in-context learning (ICL) for recommendation tasks. Hou et al.~\cite{hou2024large}, while they also explored zero-shot capabilities, demonstrated how in-context learning can enhance recommendation performance by providing demonstration examples. They augmented input interaction sequences by pairing prefixes with corresponding successors to create examples that improved the model's understanding of the recommendation task. 
+
+Sanner et al.~\cite{sanner2023large} conducted a comprehensive evaluation of different in-context learning strategies for recommendation tasks. They collected a novel dataset containing both natural language preference descriptions and item-based preferences from users, allowing for direct comparison between these two modalities. Through extensive experiments with different prompting strategies (completion, zero-shot, and few-shot), they demonstrated that LLMs can provide competitive recommendation performance using only natural language preferences in near cold-start scenarios, without requiring the extensive training data needed for collaborative filtering methods. Their findings that few-shot prompting generally outperforms other strategies and that LLM-based recommendation can provide an "explainable and scrutable language-based preference representation" align with our approach, though we focus on reranking existing recommendations rather than generating them directly. Despite their findings that only using natural language preferences provided superior results as a direct recommender when addressing cold start issues, we eventually transitioned to an item + language preferences approach with few shot prompting. We did this after our initial pilot testing with an early version of the framework as we found this helped the model identify which new movies are of a similar "type" to a user's favorite movies during similarity scoring, realizing that even if the textual description of what a user tends to like aligns with the movie's description, the overall genres might be different, the user might prefer live action opposed to cartoons, etc.
+
+Liu et al.~\cite{liu2023chatgpt} evaluated ChatGPT's performance across five common recommendation tasks (rating prediction, sequential recommendation, direct recommendation, explanation generation, and review summarization) using a prompt construction framework with task descriptions, behavior injection using few shot prompting, and format indicators. Their findings on rating prediction were particularly significant, demonstrating that ChatGPT with few-shot prompting not only outperformed zero-shot approaches but also surpassed traditional recommendation algorithms like Matrix Factorization and Multi-Layer Perceptron in terms of both RMSE and MAE metrics. This provides compelling evidence that in-context learning can effectively transfer knowledge to recommendation tasks without task-specific training. Our approach builds on these insights by designing structured prompts with few-shot examples for similarity scoring tasks, leveraging the demonstrated effectiveness of this technique for recommendation-related judgments.
+
+Remaining questions to be solved for in context learning according to \cite{wu2024survey} involve the selection of demonstration examples and the influence of the number of demonstration examples on recommendation performance. A limitation of our study is we did not choose to thoroughly investigate these questions as our framework is time consuming to execute for an entire dataset of users, and to avoid overwhelming pilot testers by asking them to compare too many recommendation sets than is reasonable.
+
+\subsection{Enhancing Traditional Algorithms with LLMs}
+
+Several researchers have explored combining traditional recommendation algorithms with LLMs. Wei et al.~\cite{wei2024llmrec} proposed LLMRec, a graph augmentation framework that enhances recommender systems through three strategies revolving around enhancing the data fed to the underlying recommender algorithm: reinforcing user-item interaction edges using LLM-based sampling, enhancing item attributes, and conducting user profiling based on historical interactions. Their approach maintains data quality through specialized denoising mechanisms, significantly improving collaborative filtering performance. Similarly, Ren et al.~\cite{ren2024representation} proposed RLMRec, a model-agnostic framework that enhances existing recommenders by aligning LLM-generated semantic representations with collaborative filtering embeddings. Their approach generates user and item profiles using LLMs and maximizes mutual information between these semantic representations and collaborative signals through contrastive or generative alignment techniques, effectively reducing noise in representation learning while maintaining the efficiency of existing recommendation models. While these approaches share conceptual similarities with our work, we focus specifically on reranking traditional algorithm outputs based on text preferences rather than augmenting the underlying collaborative filtering recommendation structure. Researchers may also consider initially using an LLM as RS approach which directly creates recommendations like \cite{sanner2023large} or \cite{zhang2024llmtreerec} to address the cold start problem then transition to a collaborative filtering hybrid approach as more data is collected.
+
+\subsection{LLM-based Description Generation and Similarity Scoring}
+
+Acharya et al.~\cite{AcharyaLLM2023} demonstrated the effectiveness of LLM-generated item descriptions as feature inputs for recommendation systems. They used Alpaca-LoRA to generate movie and book descriptions based solely on titles, converted these to embeddings using BERT, and fed them into a GRU-based sequential recommendation model alongside item ID embeddings. Their experiments showed that systems using LLM-generated descriptions achieved performance comparable to those using web-scraped descriptions across multiple evaluation metrics. Our framework builds on this concept by using LLMs to generate movie descriptions when official ones are unavailable, similarly leveraging these descriptions to enhance recommendation quality. 
+
+Wang and Lim~\cite{wang2023zero} explored using LLMs for zero-shot next-item recommendation by designing prompts to generate user preference descriptions from rated items. While they ultimately use these preferences differently (their approach uses preferences to guide GPT-3 in making direct recommendations, ours uses preferences for similarity scoring to re-rank traditional algorithm recommendations), the core technique of preference extraction is highly similar. Their approach demonstrates how LLMs can understand and articulate user preferences without explicit training on recommendation tasks. Our work builds upon this concept by automatically generating preference summaries for users in the MovieLens dataset based on their rated movies, which are then leveraged for similarity scoring and recommendation refinement.
+
+Maragheh et al.~\cite{yousefi2024llm} utilized LLMs to generate aspect embeddings for refining recommendations by providing contextual information and aligning with user intentions. This approach inspired our similarity scoring system, though we focus on direct similarity computation between user preferences and movie descriptions rather than aspect embedding generation.
+
+\subsection{Addressing Biases and Evaluation Challenges}
+
+The literature identifies several challenges in LLM-enhanced recommendation systems. These include position bias, where LLMs prioritize items in the top order~\cite{wu2024survey}, popularity bias, and fairness issues related to sensitive attributes. We address position biasing by considering each movie independently, this prevents the LLM from providing more or less attention to any specific movie. Our system also attempts to mitigate popularity bias by incorporating normalized popularity scores, popularity preferences, rating preferences, and release date preferences into the similarity calculation. Finally to address the fairness bias, we provide all information necessary in a single prompt for the LLM to make an informed decision, reducing it's dependency on any pretrained knowledge that it may possess for any specific movie.
+
+In addition, researchers have noted challenges in controlling LLM outputs and defining appropriate evaluation metrics. Wang et al.~\cite{wang2023rethinking} demonstrated that suitable demonstrations can effectively control the output format and content of LLMs, which directly improves recommendation evaluation metrics. Following this insight, we address these challenges by using carefully designed few-shot prompts, a retry mechanism, and regex expression searching to extract similarity scores and employing both hit rate and cumulative hit rate metrics alongside perceived quality assessments.
+
+Our work falls under the category of Generative LLMs in Non-tuning – In-context Learning as defined by \cite{wu2024survey}, as we provide demonstration examples in our prompting, following the few-shot learning strategy. This approach allows us to leverage pre-trained LLMs without fine-tuning while still achieving personalized recommendations that incorporate users' textual preferences.
+
+\section{Methodology}
+\subsection{Preliminaries}
+This research proposes a framework that leverages the capabilities of Large Language Models (LLMs) to enhance recommendation systems by refining the recommendations of traditional recommendation algorithms such as SVD and SVD++. This approach builds on the foundational work of Acharya et al. \cite{AcharyaLLM2023} and Maragheh et al. \cite{yousefi2024llm}, who demonstrated the potential of LLMs in generating item descriptions and aspect augmentations, respectively. The methodology is structured as follows and is illustrated in Figure \ref{fig:flowchart}.
+
+\begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{images/LLM_Framework_Flowchart.png}
+    \caption{Framework Architecture Flowchart showing data generation and recommendation paths}
+    \label{fig:system-flowchart}
+\end{figure*}
+
+
+\noindent
+\textbf{Data Preparation.}
+In our hit rate experiment where we generate user preference profiles for all dataset users, we utilized the MovieLens Latest Small (100k dataset)~\cite{harper2015movielens}, which provides a comprehensive set of user ratings for recommendations. The stable 100k version from 1998 is outdated and uses a file format not easily recognized by modern libraries. This is why we chose the Latest Small Version (last updated 9/2018) that is more up to date with current information (i.e, more likely to contain accurate IMDb links), contains newer and relevant movies, and is fully supported by the Surprise library, despite its disclaimer that it should not be used for research. This dataset's CSVs are loaded into pandas DataFrames, and we create mapping dictionaries between MovieLens Movie IDs and IMDb IDs using the \path{links.csv} included in the MovieLens dataset. This facilitates seamless integration with IMDb data, enabling the retrieval of additional movie information, including plots and reviews if needed. For our study, using Latest Small was necessary for fully comparing hit rate between LLM Enhanced and their corresponding base traditional algorithms, as generating similarity scores and user preference profiles for all users in the full MovieLens dataset would be unfeasible due to local resource capacity and the computational complexity of LLMs. However, in our initial piloting experiment where we measured the perceived quality of an earlier version of our system, we used the full MovieLens 32M dataset to generate the initial recommendations with SVD. 
+
+\noindent
+\textbf{Traditional Recommendation Algorithms.}
+We employ both SVD and SVD++ algorithms to generate initial movie recommendations. SVD and SVD++ are matrix factorization techniques that uncover latent factors in user-item interactions, making them effective for handling sparse data~\cite{koren2009matrix}. For calculating hit rate, the algorithms are trained on the MovieLens 100k dataset, and we compare their performance with our LLM-enhanced versions using hit rate and cumulative hit rate metrics. For measuring the perceived quality, we utilized the full MovieLens 32M dataset to generate the initial recommendations which were then enhanced before being fed to the pilot testers.
+
+\noindent
+\textbf{LLM-enhanced Framework Description Generation.}
+The integration of generating descriptions is inspired by Acharya et al. \cite{AcharyaLLM2023}. We use LLMs to generate movie descriptions through few-shot prompting when official IMDb descriptions can't be retrieved from IMDb. This approach reduces reliance on web scraping and mitigates personal biases in descriptions, aligning with Acharya et al.'s \cite{AcharyaLLM2023} findings that LLM-generated descriptions can achieve performance close to manually curated ones. 
+
+Our system has evolved from our previous implementation when we first proposed this framework using Microsoft's Phi-3-mini-4k-instruct-gguf model to now employing the more powerful Phi-4-Q6\_K quantization model. This upgrade allows the model to run efficiently on an RTX 4090 Laptop GPU with 16 GB VRAM, providing a good balance between model capability and resource constraints while improving recommendation quality.
+
+We also implement LLM fuzzy matching to search the IMDB Cinemagoer API for outdated or broken IMDB IDs, addressing a common issue in the MovieLens dataset where some IDs are no longer valid. This reduces the amount of cases where descriptions can't be found. The system can also match movies that users want to rate by searching the IMDB database, then converting matches to MovieLens movie IDs.
+
+An example of the description generation prompt can be seen in Figure \ref{fig:Description Generation Prompt}. Few-shot prompting allows the model to learn from a limited number of examples, making it adaptable to new tasks with minimal data. All few shot example movie descriptions in the example prompts shown are retrieved from IMDb plot summaries or trailer descriptions. We construct prompts for the LLM using few-shot examples, guiding the model in generating logically sound if not accurate descriptions depending on the training set of the model.
+
+% Description Generation Prompt
+\begin{figure*} \begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize 
+
+\textbf{System Prompt: }
+
+You are a helpful assistant that generates concise movie descriptions. Do not use newlines in your response. The examples provided are for context only and should not appear in your output. Return only the description.
+
+\textbf{User Prompt:}
+
+Example 1:
+Movie title: Inception
+Description: A thief who steals corporate secrets through dream-sharing technology is tasked with implanting an idea into a CEO's mind.
+
+Example 2:
+Movie title: The Matrix
+Description: A computer hacker discovers his reality is an illusion and joins rebels to fight its controllers.
+
+Generate a description for this movie:
+
+Movie title: Interstellar
+
+Description:
+\end{quote} 
+\end{mdframed} 
+\caption{Description Generation Prompt with example descriptions retrieved from IMDB} 
+\label{fig:Description Generation Prompt}
+\end{figure*}
+
+\subsection{Similarity Scoring and Personalized Recommendations}
+\label{sec:similar_scoring}
+Inspired by Maragheh et al. \cite{yousefi2024llm}, our system uses LLMs to generate similarity scores between user preferences and movie titles, followed by their descriptions. It leverages an LLM to evaluate the similarity between a user's preferences and a set of movie descriptions of length \( N \times T \times 10^M \), sorted by the highest rating to the lowest that the base algorithm (SVD or SVD++) predicts a user will rate a movie based on their past ratings. \( N \) is the final number of movies to recommend to the user while \( M \) can be modified for more accurate results, at the cost of performance. \(T\) is a tuning factor in the range (0, 1] for more fine grained control. If we wanted a search count of 100 for an N = 5, the search count equation would intuitively be \(5 * 0.2 * 10^2\), where \(T\) = 0.2 and \(M\) = 2.
+
+In our testing, we used a search count of 100 for each N (N@1, N@5, and N@10), meaning we select the top 100 base recommendations for each user, assign a similarity score to each, and then rerank them according to those scores. The top \( N \) movies with the highest similarity scores are returned as personalized recommendations. This approach builds on Maragheh et al.'s \cite{yousefi2024llm} use of LLMs to generate aspect embeddings that refine recommendation systems by providing contextual information and aligning recommendations with user intention.
+
+Our similarity scoring process incorporates several important factors beyond just text preferences and movie descriptions:
+
+\begin{itemize}
+    \item \textbf{IMDb Ratings:} When available, each movie's IMDb rating (on a scale of 0-10) is included in the prompt.
+    \item \textbf{Popularity Scores:} A normalized popularity score (0-100) derived from IMDb vote counts is included when available. This score is calculated using linear interpolation where 1 million votes corresponds to a score of 100 as follows. 
+    \begin{equation}
+        \text{normalized\_score} = \min(100, \max(0, 100 \times \frac{\text{votes}}{1{,}000{,}000}))
+    \end{equation}.
+    \item \textbf{Rating Preferences:} For users who tend to favor highly-rated content, we conditionally include the statement "I prefer movies with high IMDb ratings" in their preference profile.
+    \item \textbf{Popularity Preferences:} Similarly, for users who gravitate toward mainstream titles, we include "I prefer popular/trending movies" in their profile.
+    \item \textbf{Release Date Range:} A preferred release date range is determined based on the user's rated movies, rounding down to the first year of the decade for the minimum year and up to the first year of the next decade (or current year, whichever is smaller) for the maximum year.
+\end{itemize}
+
+Both rating and popularity preferences are determined automatically during the generation of user preference profiles. If the average IMDb rating of a user's favorite movies is >= 7.0/10, the rating preference is enabled. Similarly, if the average normalized popularity score is >= 80/100, the popularity preference is enabled. These elements appear conditionally in the LLM prompt only when relevant to that particular user's profile. These factors were implemented to address the initial criticism during pilot testing of obscure titles being recommended to users who preferred more more mainstream titles.
+
+Our framework can generate these preference profiles for all users in the dataset automatically based on their favorite movies, which is how we scale to use the framework on an entire dataset. Alternatively, users can specify all their preferences manually if desired. Due to performance considerations, the framework should be applied to users on an as-needed basis, allowing streaming service platforms to personalize recommendations for users who wish to provide their preferences.
+
+\noindent
+\textbf{Similarity Scoring Prompt.}
+To compute the similarity between a user's preferences and a movie's description, we construct a prompt that provides the user's input and the movie's details to the LLM and ask the LLM to return a similarity score between -1.0 and 1.0, where -1.0 means the movie goes completely against the user's preferences, 0 means neutral or not enough information, and 1.0 is a perfect match. We use regex expression searching to extract these similarity scores from LLM responses, ensuring consistent output format and stability. The prompt includes few-shot examples to guide the LLM's response, and is specifically formatted to accommodate the Phi-4 model's input structure with properly formatted system and user messages. The combination between few shot examples and regex expression searching allows even small models to quickly learn the task and provide accurate responses. An example of the prompt is seen as follows in Figure \ref{fig:Sim_Scoring_Prompt} without the special Phi-4 model formatting for generalization. 
+
+\begin{figure*} 
+\begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize 
+
+% System Message (For Phi-4-Q6_K model this would be wrapped with special tags)
+\textbf{System:}
+
+You are a movie recommendation assistant. Your task is to evaluate how well a movie description aligns with a user's stated preferences and their favorite movies. Always respond with a number between -1.0 and 1.0, where:
+-1.0 means the movie goes completely against their preferences,
+0 means neutral or there isn't enough information,
+1.0 is a perfect match. You must respond with only the number, without any additional text or formatting under all circumstances.
+
+\textbf{User:}
+
+Example 1:
+
+User input: I love science fiction with deep philosophical themes. 
+
+I prefer movies with high IMDb ratings.
+
+User's favorite movies:
+
+Movie title: The Matrix (1999)
+
+Movie title: Blade Runner (1982)
+
+Movie title: Interstellar (2014)
+
+Preferred Release Date Range: I prefer movies released between 1980 and 2020.
+
+New movie to evaluate:
+
+Movie title: Inception (2010)
+
+IMDb Rating: 8.8/10
+
+Popularity Score: 93/100
+
+Movie description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+0.9
+
+Example 2:
+
+User input: I enjoy light-hearted comedies with a lot of humor. 
+
+I prefer popular/trending movies.
+
+User's favorite movies:
+
+Movie title: The Hangover (2009)
+
+Movie title: Superbad (2007)
+
+Movie title: Step Brothers (2008)
+
+Preferred Release Date Range: I prefer movies released between 2000 and 2010.
+
+New movie to evaluate:
+
+Movie title: The Dark Knight (2008)
+
+IMDb Rating: 9.0/10
+
+Popularity Score: 98/100
+
+Movie description: Set within a year after the events of Batman Begins (2005), Batman, Lieutenant James Gordon, and new District Attorney Harvey Dent successfully begin to round up the criminals that plague Gotham City, until a mysterious and sadistic criminal mastermind known only as "The Joker" appears in Gotham, creating a new wave of chaos.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+-0.7
+
+Example 3:
+
+User input: I am fascinated by historical documentaries.
+
+User's favorite movies:
+
+Movie title: They shall not grow old (2018)
+
+Movie title: Apollo 11 (2019)
+
+Movie title: 13th (2016)
+
+Preferred Release Date Range: I prefer movies released between 2010 and 2020.
+
+New movie to evaluate:
+
+Movie title: The Lord of the Rings: The Fellowship of the Ring (2001)
+
+IMDb Rating: 8.8/10
+
+Popularity Score: 95/100
+
+Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+-0.5
+
+Now, respond to the following prompt:
+
+User input: I am drawn to science fiction and fantasy stories that are well written.
+
+I prefer movies with high IMDb ratings.
+
+I prefer popular/trending movies.
+
+User's favorite movies:
+
+Movie title: The Lord of the Rings: The Two Towers (2002)
+
+Movie title: Rogue One: A Star Wars Story (2016)
+
+Movie title: WALL·E (2008)
+
+Preferred Release Date Range: I prefer movies released between 2000 and 2020.
+
+New movie to evaluate:
+
+Movie title: Interstellar (2014)
+
+IMDb Rating: 8.6/10
+
+Popularity Score: 91/100
+
+Movie description: When Earth becomes uninhabitable in the future, a farmer and ex-NASA pilot, Joseph Cooper, is tasked to pilot a spacecraft, along with a team of researchers, to find a new planet for humans.
+
+Rate how likely you think the movie aligns with the user's interests (respond with a number in range [-1, 1]):
+
+\end{quote} 
+\end{mdframed} 
+\caption{Similarity Scoring Prompt with preference statements, preferred release range, favorite movies, IMDb ratings and popularity scores} 
+\label{fig:Sim_Scoring_Prompt}
+\end{figure*}
+
+\section{Experiments and Results}
+\subsection{Implementation Details}
+The proposed system is designed to work in three different modes: development, production, and generation of data. Development mode works with a locally running LLM model that exposes an OpenAPI-compatible API. In this mode, we tested with a more powerful \verb|Phi-4-Q6_K| quantization model compared to our previous proposal which used Phi-3-mini-4k-instruct. The Q6\_K quantization allows the model to run on an RTX 4090 Laptop GPU with 16 GB VRAM. The production mode allows the system to use even higher quality LLM models by outsourcing the LLM computation to OpenAI, utilizing its current small yet fast, and cheap GPT-4o-mini model, though we recommend local execution due to latency and the sheer number of api calls made by the system.
+
+Generate data mode is designed to retrieve data such as movie descriptions from IMDb through the Cinemagoer library with descriptions being saved every 100 movies to avoid loss of progress. If a description can't be found for a movie, for example, because of an outdated MoveLens ID to IMDb ID link in the MovieLens dataset, we will generate a description for the movie using an LLM. We implemented fuzzy matching to search the IMDB Cinemagoer API for movies with outdated or broken IMDB IDs, and the system can also find data for movies the user wants to rate by searching the IMDB database and converting matches to MovieLens movie IDs.
+
+We currently handle description generation locally due to the sheer scale of the dataset and to reduce the number of calls to OpenAI for cost savings. Our system caches retrieved and generated movie descriptions to optimize performance. Our caching strategy reduces the need for repeated API calls to IMDb, and the OpenAI-compatible API, improving system efficiency.
+
+By building on the methodologies of \cite{AcharyaLLM2023,yousefi2024llm}, our proposed framework of LLM-enhanced traditional algorithm recommendations demonstrates the potential of LLMs to enhance and build upon traditional recommendation system algorithms such as SVD and SVD++, providing personalized and context-aware movie suggestions that align with user preferences. Our work continues the trend of integrating LLMs at various stages of the recommendation process, from description generation to similarity scoring, ultimately aiming to tailor recommendations based on user preferences and intentions.
+ 
+\subsection{Comparison using Hit Rate}
+
+%\subsection{Comparison using Cumulative Hit Rate}
+\smallskip
+\noindent
+Using the latest version of our system, we generated preference profiles automatically for all users in the MovieLens Latest Small Dataset based on their favorite movies, incorporating normalized popularity scores, rating preferences, and release date preferences. We then calculated hit rates for both traditional algorithms (SVD and SVD++) and their LLM-enhanced versions. We tested with N@1, N@5, and N@10 for both hit rate and cumulative hit rate, recognizing that the first ten or so recommendations are the most crucial for user satisfaction. It is key to mention that we ensure we do not include the left out test set movie for each user in their user preference profile that is provided to the LLM, as we felt this may count as "cheating the result" when asking the LLM to rate the similarity of that movie tot the user. Our results, shown in Table \ref{tab:svd_comparison}, \ref{tab:svdpp_comparison}, and \ref{tab:averages} demonstrate significant improvements with the LLM-enhanced approach.
+
+\begin{table*}
+\centering
+\caption{SVD LLM vs. SVD Comparison}
+\label{tab:svd_comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD LLM} & \textbf{SVD} & \textbf{Improvement Ratio} & \textbf{Search Count} \\
+\midrule
+Hit Rate N@1 & \textbf{0.006011} & 0.000000 & Undefined & 100 \\
+Hit Rate N@5 & \textbf{0.013661} & 0.004918 & 2.777755 & 100 \\
+Hit Rate N@10 & \textbf{0.017486} & 0.009290 & 1.882239 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@1 & \textbf{0.009551} & 0.000000 & Undefined & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@5 & \textbf{0.021968} & 0.006686 & 3.285672 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@10 & \textbf{0.026743} & 0.013372 & 1.999925 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}
+\centering
+\caption{SVD++ LLM vs. SVD++ Comparison}
+\label{tab:svdpp_comparison}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD++ LLM} & \textbf{SVD++} & \textbf{Improvement Ratio} & \textbf{Search Count} \\
+\midrule
+Hit Rate N@1 & \textbf{0.007104} & 0.001639 & 4.334350 & 100 \\
+Hit Rate N@5 & \textbf{0.012568} & 0.007104 & 1.769144 & 100 \\
+Hit Rate N@10 & \textbf{0.016940} & 0.012022 & 1.409083 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@1 & \textbf{0.011461} & 0.001910 & 6.000524 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@5 & \textbf{0.021012} & 0.010506 & 2.000000 & 100 \\
+Cumulative Hit ($\geq$ 4.0) N@10 & \textbf{0.026743} & 0.018147 & 1.473687 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\caption{Performance Averages Across Different N Values}
+\label{tab:averages}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{SVD} & \textbf{SVD LLM} & \textbf{SVD++} & \textbf{SVD++ LLM} \\
+\midrule
+Average Hit Rate & 0.004736 & \textbf{0.012386} & 0.006922 & 0.012204 \\
+Average Cumulative Hit Rate & 0.006686 & 0.019421 & 0.010188 & \textbf{0.019739} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The results show that our LLM-enhanced approach consistently outperforms the base algorithms. For SVD, we see significant improvements across all N values, with the most dramatic increase at N@1 where the base SVD had zero hits. Similarly, for SVD++, the LLM-enhanced version shows substantial gains, particularly for the cumulative hit rate where we observe a six-fold improvement at N@1. These results demonstrate that the LLM framework provides better understanding of individual users' preferences, resulting in more personalized recommendations.
+
+%\changeAD{reviewed up to this 12/02 3:32 pm}
+
+\subsection{Comparison Using Measured Perceived Quality}
+
+We performed our initial pilot testing on the MovieLens 32M dataset. In this testing, in order to find out the quality of the recommendations through experiments, we reached out to several diverse individuals, male and female, with an age range of 20-60 years old. We asked them to rate their favorite movies, requesting a minimum of 3 (the same amount Netflix requires when creating a user profile), with no maximum limit. We used responses from 7 users -- each of whom provided a range of 3-12 movies, while an actual range of 3-10 movies was used due to reasons like some favorite movies not being in the MovieLens 32M dataset due to being released in the current year. We additionally asked users to describe their user preferences. An example response we took from a test user can be seen in Table \ref{tab:user_response}.
+
+%\subsection{Example User Response}
+\begin{table} 
+\begin{minipage}{\linewidth}
+\centering 
+\caption{Example User Response: Movies and Ratings} 
+\label{tab:user_response} 
+\begin{tabular}{l c} 
+\toprule 
+\textbf{Movie Title} & \textbf{Rating} \\ 
+\midrule 
+The Lord of the Rings: The Two Towers & 5 \\ 
+Rogue One: A Star Wars Story & 5 \\ 
+WALL\textperiodcentered E & 5 \\ 
+\bottomrule 
+\end{tabular}
+
+\vspace{1ex}
+\begin{mdframed} 
+\textbf{User Preferences: }
+\begin{quote}
+    "I am drawn to science fiction and fantasy stories that are well written."
+\end{quote}
+\end{mdframed}
+\end{minipage}
+\end{table}
+
+For this initial pilot testing with an earlier version of our system using the Phi-3 model, we were interested in whether users preferred LLM-enhanced recommendations over traditional algorithm-based ones. We generated two sets of recommendations total with both methods, using the full training set of each survey test user. After generation, the raw recommendations for each user were directly presented to them anonymously, meaning they did not know which method produced which recommendations. The question posed to each pilot tester was "Please let us know which set of recommendations A. or B. is best adapted to your tastes and preferences based on the information you gave."
+
+\emph{5 out of 7 users anonymously preferred the recommendations provided by the LLM-enhanced method while 2 preferred those from the original algorithm}. A sample set of recommendations is shown in Figure \ref{tab:user_preferences} based on the user response shown in Table \ref{tab:user_response}\footnote{More example recommendations for various users can be found at \url{https://github.com/Windz-GameDev/Recommendation-Systems-Research} in the Example Inputs and Outputs section.}.
+
+Users who preferred traditional algorithm recommendations noted that it provided famous, recognizable titles like Citizen Kane (1941) or The Godfather (1972), while the LLM-enhanced method would recommend titles that aligned with their stated preferences description-wise but sometimes represented different media types than their favorite movies (e.g., recommending Japanese anime to fans of classic 80s movies). This insight led to our current implementation, which incorporates favorite movies, popularity preferences, and rating preferences into the similarity calculation to provide more contextually appropriate recommendations.
+
+% \noindent
+% \textbf{Experiments.} 
+To validate our approach during piloting, we compared the performance of our proposed LLM-enhanced recommendation system against the traditional SVD algorithm implemented in the Surprise Python library~\cite{hug2020surprise} on the MovieLens 32M dataset. \cite{harper2015movielens} The two sets of recommendations were provided to seven users of our system and their preferences are reported here in Table \ref{tab:user_preferences}.
+
+%to quantify improvements in recommendation accuracy and personalization using the metrics cumulative hit rate and measuring the perceived quality. 
+
+\begin{table} \centering \caption{User Preference Between Recommendation Systems} \label{tab:user_preferences} \begin{tabular}{l l} \toprule \textbf{User ID} & \textbf{Preferred Recommendation System} \\ 
+\midrule User 1 & Ours (LLM-enhanced) \\ User 2 & Traditional Algorithm \\ User 3 & Ours (LLM-enhanced) \\ User 4 & Ours (LLM-enhanced) \\ User 5 & Traditional Algorithm \\ User 6 & Ours (LLM-enhanced) \\ User 7 & Ours (LLM-enhanced) \\ \bottomrule \end{tabular} \end{table}
+ 
+\begin{figure*} \begin{mdframed}[linewidth=1pt] \begin{quote}\footnotesize
+
+\textbf{System Prompt:}
+
+You are a helpful assistant that generates comprehensive user preference summaries based on multiple movies that a user has rated. Ensure the preferences are written in the first person without newlines. The instructions and examples exist to help you understand the context and how to format your response, do not include them in your response. You should match the format of the user preferences responses in the examples exactly with nothing else in your response.
+
+\textbf{User Prompt:}
+
+Example 1:
+
+Movies:
+
+1. Movie title: The Shawshank Redemption
+
+   Description: A banker convicted of uxoricide forms a friendship over a quarter century with a hardened convict, while maintaining his innocence and trying to remain hopeful through simple compassion.
+   
+   User rating: 5.0
+
+2. Movie title: The Godfather
+
+   Description: The aging patriarch of an organized crime dynasty transfers control of his clandestine empire to his reluctant son.
+   
+   User rating: 4.5
+
+User preferences: I enjoy movies with deep character development, themes of redemption, and complex family dynamics.
+
+Example 2:
+
+Movies:
+
+1. Movie title: The Matrix
+
+   Description: A computer hacker learns from mysterious rebels about the true nature of his reality and his role in the war against its controllers.
+   
+   User rating: 4.5
+
+2. Movie title: Inception
+
+   Description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.
+   
+   User rating: 4.0
+
+User preferences: I love movies with mind-bending plots, action-packed sequences, and philosophical themes.
+
+Now, based on the following movie titles, descriptions, and ratings, using 60 tokens or less, generate a comprehensive user preference summary in the first person, without newlines:
+
+[User's Rated Movies and Descriptions]
+\end{quote} 
+\end{mdframed} 
+\caption{User Preference Summary Prompt with example descriptions from IMDb} 
+\label{fig:User_Preference_Generation}
+\end{figure*}
+
+
+\begin{figure}
+    %\centering
+    \begin{mdframed} 
+    Top 10 recommendations according to SVD:\\
+Planet Earth II (2016), 
+Planet Earth (2006), 
+Band of Brothers (2001), 
+The Civil War (1990), 
+The Blue Planet (2001), 
+Cosmos, 
+Cosmos: A Spacetime Odyssey
+Blue Planet II (2017), 
+Twelve Angry Men (1954), 
+Shawshank Redemption, The (1994). \\
+
+Top 10 recommendations according to our LLM-enhanced:\\
+Dune (2021), 
+Inception (2010), 
+Cosmos: A Spacetime Odyssey, 
+Attack On Titan (2013), 
+Black Mirror, 
+Firefly (2002), 
+Avengers: Infinity War - Part II (2019), 
+Avengers: Infinity War - Part I (2018), 
+Over the Garden Wall (2013), 
+Infinity Train (2016). 
+\end{mdframed} 
+    \caption{Sample recommendations generated by SVD and our proposed LLM-enhanced recommender systems. The particular user who received these recommendations chose the LLM-enhanced ones anonymously.}
+    \label{fig:user-prefs}
+\end{figure}
+
+\section{Conclusion and Future Work}
+In this paper, we have proposed a novel LLM-enhanced recommendation system that uses SVD and SVD++ recommendations as a foundation and fine-tunes them using a scoring mechanism provided to an LLM. Our hit rate metrics demonstrate consistent improvements across different N values, and our initial user study with an earlier Phi-3 version showed that $71.5\%$ of users preferred LLM-enhanced recommendations. Therefore, the answer to the research question asked in the title of the paper is a resounding \textit{yes}.
+
+Our current implementation already incorporates several key features we identified as important through our testing:
+\begin{enumerate}
+  \item Automatic generation of user preference profiles based on favorite movies
+  \item Integration of normalized popularity scores to recommend more recognizable titles
+  \item Consideration of rating preferences to highlight quality content
+  \item Release date preferences to match users' preferred time periods
+  \item Regex expression searching to extract similarity scores accurately
+  \item Few-shot prompting to ensure consistent outputs even for smaller models
+\end{enumerate}
+
+Our shift from Phi-3-mini to Phi-4-Q6\_K quantization has enabled more sophisticated language understanding while still running efficiently on a RTX 4090 Laptop GPU with 16 GB VRAM. The LLM fuzzy matching capability for handling outdated or broken IMDB IDs has significantly improved the robustness of our system.
+
+Future work will focus on further refining the automatic preference generation algorithm and optimizing the system for application on streaming platforms. For similarity scoring, we could implement parallelization across multiple GPUs to evaluate multiple user-movie pairs simultaneously, and batch processing to compute multiple movies' similarity scores for a single user in one LLM API call, significantly reducing API overhead. For example, when calculating hit rates, we could batch 50-100 movie evaluations per user into a single prompt. Similarly, for user preference profile generation, we could parallelize the process across multiple workers to generate multiple users' preference profiles simultaneously. Additionally, caching strategies could be expanded to store intermediate similarity scores for frequently occurring user-movie combinations.
+
+Additionally, researchers may experiment with collecting more user data like favorite actors and directors, favorite genres, etc, and include this additional data in movie descriptions during similarity score generation for even more nuanced understanding. Overall, while scalable for the purposes of calculating hit rate for an entire dataset of users, due to LLM computational requirements, the framework is designed to be applied on an as-needed basis, allowing streaming service platforms to personalize recommendations for users who wish to provide their preferences while understanding individual users better through the LLM framework.
+
+%\changeAD{AD will write}
+
+\bibliographystyle{acm}
+\bibliography{references}
+
+
+%\input{www_review}
+
+\end{document}

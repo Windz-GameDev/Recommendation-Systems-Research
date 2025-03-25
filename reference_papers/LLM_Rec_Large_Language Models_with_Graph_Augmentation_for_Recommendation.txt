@@ -1,0 +1,917 @@
+--- Page 1 ---
+LLMRec: Large Language Models with Graph Augmentation
+for Recommendation
+Wei Wei
+University of Hong Kong
+weiweics@connect.hku.hkXubin Ren
+The problem of data sparsity has long been a challenge in recom-
+mendation systems, and previous studies have attempted to address
+this issue by incorporating side information. However, this ap-
+proach often introduces side effects such as noise, availability issues,
+and low data quality, which in turn hinder the accurate modeling
+of user preferences and adversely impact recommendation perfor-
+mance. In light of the recent advancements in large language models
+(LLMs), which possess extensive knowledge bases and strong rea-
+soning capabilities, we propose a novel framework called LLMRec
+that enhances recommender systems by employing three simple
+yet effective LLM-based graph augmentation strategies. Our ap-
+proach leverages the rich content available within online platforms
+(e.g., Netflix, MovieLens) to augment the interaction graph in three
+ways: (i) reinforcing user-item interaction egde, (ii) enhancing the
+understanding of item node attributes, and (iii) conducting user
+node profiling, intuitively from the natural language perspective.
+By employing these strategies, we address the challenges posed
+by sparse implicit feedback and low-quality side information in
+recommenders. Besides, to ensure the quality of the augmentation,
+we develop a denoised data robustification mechanism that includes
+techniques of noisy implicit feedback pruning and MAE-based fea-
+ture enhancement that help refine the augmented data and improve
+its reliability. Furthermore, we provide theoretical analysis to sup-
+port the effectiveness of LLMRec and clarify the benefits of our
+method in facilitating model optimization. Experimental results
+on benchmark datasets demonstrate the superiority of our LLM-
+based augmentation approach over state-of-the-art techniques.
+•Information systems →Recommender systems.
+KEYWORDS
+Large Language Models, Graph Learning, Data Augmentation, Content-
+based Recommendation, Multi-modal Recommendation, Collabora-
+tive Filtering, Data Sparsity, Bias in Recommender System
+1 INTRODUCTION
+Recommender systems play a crucial role in mitigating information
+overload by providing online users with relevant content [ 27,44].
+To achieve this, an effective recommender needs to have a precise
+understanding of user preferences, which is not limited to analyzing
+historical interaction patterns but also extends to incorporating
+rich side information associated with users and items [61].
+In modern recommender systems, such as Netflix, the side infor-
+mation available exhibits heterogeneity, including item attributes
+[53], user-generated content [ 7,28], and multi-modal features [ 52]
+encompassing both textual and visual aspects. This diverse content
+offer distinct ways to characterize user preferences. By leveraging
+such side information, models can obtain informative representa-
+tions to personalize recommendations. However, despite signifi-
+cant progress, these methods often face challenges related to data
+scarcity and issues associated with handling side information.
+Sparse Implicit Feedback Signals. Data sparsity and the cold-
+start problem hinder collaborative preference capturing [ 48]. While
+many efforts (e.g., NGCF [ 41], LightCGN [ 11]) tried powerful graph
+neural networks(GNNs) in collaborative filtering(CF), they face lim-
+its due to insufficient supervised signals. Some studies [ 33] used
+contrastive learning to add self-supervised signals (e.g., SGL [ 51],
+806
+
+
+--- Page 2 ---
+SimGCL [ 54]). However, considering that real-world online plat-
+forms (e.g., Netflix, MovieLens) derive benefits from modal content,
+recent approaches, unlike general CF, are dedicated to incorporat-
+ing side information as auxiliary for recommenders. For example,
+MMGCN [ 50] and GRCN [ 49] incorporate item-end content into
+GNNs to discover high-order content-aware relationships. LAT-
+TICE [ 59] leverages auxiliary content to conduct data augmentation
+by establishing i-i relationships. Recent efforts (e.g., MMSSL [ 45],
+MICRO [ 58]) address sparsity by introducing self-supervised tasks
+that maximize the mutual information between multiple content-
+augmented views. However, strategies for addressing data sparsity
+in recommender systems, especially in multi-modal content, can
+sometimes be limited. This is because the complexity and lack of
+side information relevance to CF can introduce distortions in the
+underlying patterns [ 49]. Therefore, it becomes crucial to ensure
+the accurate capture of realistic user preferences when incorporat-
+ing side information in CF, in order to avoid suboptimal results.
+Data Quality Issues of Side Information. Recommender systems
+that incorporate side information often encounter significant issues
+that can negatively impact their performance. i) Data Noise is an
+important limitation faced by recommender systems utilizing side
+information is the issue of data noise[ 39], where attributes or fea-
+tures may lack direct relevance to user preferences. For instance, in
+a micro video recommender, the inclusion of irrelevant textual titles
+that fail to capture the key aspects of the video’s content introduces
+noise, adversely affecting representation learning. The inclusion
+of such invalid information confuse the model and lead to biased
+or inaccurate recommendations. ii) Data heterogeneity[ 4] arises
+from the integration of different types of side information, each
+with its own unique characteristics, structures, and representations.
+Ignoring this heterogeneity leads to skewed distributions [ 26,53].
+Bridging heterogeneous gap is crucial for successfully incorporat-
+ing side information uniformly. iii) Data incompleteness [15,20]
+occurs when side information lacks certain attributes or features.
+For instance, privacy concerns[ 56] may make it difficult to collect
+sufficient user profiles to learn their interests. Additionally, items
+may have incomplete textual descriptions or missing key attributes.
+This incompleteness impairs the model’s ability to fully capture
+the unique characteristics of users and items, thereby affecting the
+accuracy of recommendations.
+Having gained insight into data sparsity and low-quality en-
+countered by modern recommenders with auxiliary content, this
+work endeavors to overcome these challenges through explicit aug-
+ment potential user-item interactive edges as well as enhances
+user/item node side information (e.g., language, genre). Inspired
+by the impressive natural language understanding ability of large
+language models (LLMs), we utilize LLMs to augment the interac-
+tion graph. Firstly, LLMRec embraces the shift from an ID-based
+recommendation framework to a modality-based paradigm [ 17,55].
+It leverages large language models (LLMs) to predict user-item in-
+teractions from a natural language perspective. Unlike previous
+approaches that rely solely on IDs, LLMRec recognizes that valuable
+item-related details are often overlooked in datasets [ 18]. Natural
+language representations provide a more intuitive reflection of user
+preferences compared to indirect ID embeddings. By incorporat-
+ing LLMs, LLMRec captures the richness and context of naturallanguage, enhancing the accuracy and effectiveness of recommenda-
+tions. Secondly, to elaborate further, the low-quality and incomplete
+side information is enhanced by leveraging the extensive knowl-
+edge of LLMs, which brings two advantages: i) LLMs are trained
+on vast real-world knowledge, allowing them to understand user
+preferences and provide valuable completion information, even for
+privacy-constrained user profiles. ii) The comprehensive word li-
+brary of LLMs unifies embeddings in a single vector space, bridging
+the gap between heterogeneous features and facilitating encoder
+computations. This integration prevents the dispersion of features
+across separate vector spaces and provide more accurate results.
+Enabling LLMs as effective data augmentors for recommenders
+poses several technical challenges that need to be addressed:
+•C1:How to enable LLMs to reason over user-item interaction
+patterns by explicitly augmenting implicit feedback signals?
+•C2:How to ensure the reliability of the LLM-augmented content
+to avoid introducing noise that could compromise the results?
+The potential of LLM-based augmentation to enhance recommenders
+by addressing sparsity and improving incomplete side information
+is undeniable. However, effectively implementing this approach
+requires addressing the aforementioned challenges. Hence, we have
+designed a novel framework LLMRec to tackle these challenges.
+Solution. Our objective is to address the issue of sparse implicit
+feedback signals derived from user-item interactions while simulta-
+neously improving the quality of side information. Our proposed
+LLMRec incorporates three LLM-based strategies for augmenting
+the interaction graph: i)Reinforcing user-item interaction edges,
+ii)Enhancing item attribute modeling, and iii)Conducting user
+profiling. To tackle C1for ’i) ’, we devise an LLM-based Bayesian
+Personalized Ranking (BPR)[ 34] sampling algorithm. This algo-
+rithm uncover items that users may like or dislike based on textual
+content from from natural language perspective. These items are
+then used as positive and negative samples in the BPR training
+process. It is important to note that LLMs are unable to perform
+all-item ranking, so the selected items are chosen from a candidate
+item pool provided by the base recommender for each user. Dur-
+ing the node attribute generation process (corresponding to ’ii) ’
+and ’iii) ’), we create additional attributes for each user/item using
+existing text and interaction history. However, it is important to
+acknowledge that both the augmented edges and node features
+can contain noise. To address C2, our denoised data robustification
+mechanism comes into play by integrating noisy edge pruning and
+feature MAE [36] to ensure the quality of the augmented data.
+In summary, our contributions can be outlined as follows:
+•The LLMRec is the pioneering work that using LLMs for graph
+augmentation in recommender by augmenting: user-item inter-
+action edges, ii) item node attributes, iii) user node profiles.
+•The proposed LLMRec addresses the scarcity of implicit feedback
+signals by enabling LLMs to reason explicitly about user-item
+interaction patterns. Additionally, it resolves the low-quality side
+information issue through user/item attribute generation and
+a denoised augmentation robustification mechanism with the
+noisy feedback pruning and MAE-based feature enhancement.
+•Our method has been extensively evaluated on real-world datasets,
+demonstrating its superiority over state-of-the-art baseline meth-
+ods. The results highlight the effectiveness of our approach in
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+Wei Wei et al.
+807
+
+--- Page 3 ---
+improving recommendation accuracy and addressing sparsity
+issues. Furthermore, in-depth analysis and ablation studies pro-
+vide valuable insights into the impact of our LLM-enhanced data
+augmentation strategies, further solidifying the model efficacy.
+2 PRELIMINARY
+Recommendation with Graph Embedding. Collaborative fil-
+tering (CF) learns from sparse implicit feedback E+, with the aim
+of learning collaborative ID-corresponding embeddings E𝑢,E𝑖for
+recommender prediction, given user 𝑢∈U and item𝑖∈I. Re-
+cent advanced recommenders employ GNNs to model complex
+high-order[ 37] u-i relation by taking E+as edges of sparse inter-
+active graph. Therefore, the CF process can be separated into two
+stages, bipartite graph embedding, and u-i prediction. Optimizing
+collaborative graph embeddings E={E𝑢,E𝑖}aims to maximize the
+posterior estimator with E+, which is formally presented below:
+E∗=arg max
+E𝑝(E|E+) (1)
+Here,𝑝(E|E+)is to encode as much u-i relation from E+intoE𝑢,E𝑖
+as possible for accurate u-i prediction ˆ𝑦𝑢,𝑖=e𝑢·e𝑖.
+Recommendation with Side Information. However, sparse in-
+teractions inE+pose a challenge for optimizing the embeddings.
+To handle data sparsity, many efforts introduced side information
+in form of node features F, by taking recommender encoder 𝑓Θas
+feature graph. The learning process of the 𝑓Θ(including E𝑢,E𝑖and
+feature encoder) with side information Fis formulated as maximiz-
+ing the posterior estimator 𝑝(Θ|F,E+):
+Θ∗=arg max
+Θ𝑝(Θ|F,E+) (2)
+𝑓Θwill output the final representation hcontain both collaborative
+signals from Eand side information from F,i.e.,h=𝑓Θ(f,E+).
+Recommendation with Data Augmentation. Despite signifi-
+cant progress in incorporating side information into recommender,
+introducing low-quality side information may even undermine
+the effectiveness of sparse interactions E+. To address this, our
+LLMRec focuses on user-item interaction feature graph augmenta-
+tion, which involves LLM-augmented u-i interactive edges EA, and
+LLM-generated node features FA. The optimization target with
+augmented interaction feature graph is as:
+Θ∗=arg max
+Θ𝑝(Θ|{F,FA},{E+,EA}) (3)
+The recommender 𝑓Θinput union of original and augmented data,
+which consist of edges {E+,EA}and node features{F,FA}, and
+output quality representation hto predicted preference scores ˆ𝑦𝑢,𝑖
+by ranking the likelihood of user 𝑢will interact with item 𝑖.
+3 METHODOLOGY
+To conduct LLM-based augmentation, in this section, we address
+these questions: Q1:How to enable LLMs to predict u-i interactive
+edges? Q2:How to enable LLMs to generate valuable content?
+Q3:How to incorporate augmented contents into original graph
+contents? Q4:How to make model robust to the augmented data?
+3.1 LLMs as Implicit Feedback Augmentor (Q1)
+To directly confront the scarcity of implicit feedback, we employ
+LLM as a knowledge-aware sampler to sample pair-wise [ 34] u-i
+training data from a natural language perspective. This increasespotential effective supervision signals and helps gain a better under-
+standing of user preferences by integrating contextual knowledge
+into the u-i interactions. Specifically, we feed each user’s histori-
+cal interacted items with side information (e.g., year, genre) and
+an item candidates pool C𝑢={𝑖𝑢,1,𝑖𝑢,2,...,𝑖𝑢,|C𝑢|}into LLM. LLM
+then is expected to select items that user 𝑢might be likely ( 𝑖+𝑢)
+or unlikely ( 𝑖−𝑢) to interact with from C𝑢. Here, we introduce C𝑢
+because LLMs can’t rank all items. Selecting items from the lim-
+ited candidate set recommended by the base recommender (e.g.,
+MMSSL [ 45], MICRO [ 58]), is a practical solution. These candidates
+C𝑢are hard samples with high prediction score ˆ𝑦𝑢𝑖to provide po-
+tential, valuable positive samples and hard negative samples. It
+is worth noting that we represent each item using textual format
+instead of ID-corresponding indexes [ 18]. This kind of representa-
+tion offers several advantages: (1) It enables recommender to fully
+leverage the content in datasets, and (2) It intuitively reflects user
+preferences. The process of augmenting user-item interactive edges
+and incorporating it into the training data can be formalized as:
+𝑖+
+𝑢,𝑖−
+𝑢=𝐿𝐿𝑀(P𝑈𝐼
+𝑢);E𝐵𝑃𝑅=E∪EA (4)
+where𝑖+𝑢,𝑖−𝑢are positive and negative samples for BPR selected by
+LLMs from candidates C𝑢for user𝑢based on input prompt P𝑈𝐼𝑢.
+The augmented dataset EAcomprises pairwise training triplets
+(𝑢,𝑖+𝑢,𝑖−𝑢), i.e.,EA={(𝑢,𝑖+𝑢,𝑖−𝑢)|(𝑢,𝑖+𝑢)∈E+
+A,(𝑢,𝑖−𝑢)∈E−
+A}. The
+textual u-i augmentation prompt P𝑈𝐼𝑢encompasses different compo-
+nents: i) task description, ii) historical interactions, iii) candidates,
+and iv) output format description, as illustrated in Fig. 2 (a).
+The utilization of LLMs-based sampler in this study to some
+extent alleviate noise (i.e., false positive) and non-interacted items
+issue (i.e., false negative) [ 2,16] exist in raw implicit feedback. In
+this context, (i) false positive are unreliable u-i interactions, which
+encompass items that were not genuinely intended by the user, such
+as accidental clicks or instances influenced by popularity bias [ 40];
+(ii)false negative represented by non-interacted items, which may
+not necessarily indicate user dispreference but are conventionally
+treated as negative samples [ 3]. By taking LLMs as implicit feedback
+augmentor, LLMRec enables the acquisition of more meaningful
+and informative samples by leveraging the remarkable reasoning
+ability of LLMs with the support of LLMs’ knowledge. The specific
+analysis is supported by theoretical discussion in Sec. 3.4.1.
+3.2 LLM-based Side Information Augmentation
+3.2.1 User Profiling & Item Attribute Enhancing (Q2). Lever-
+aging knowledge base and reasoning abilities of LLMs, we propose
+to summarize user profiles by utilizing users’ historical interactions
+and item information to overcome limitation of privacy. Addition-
+ally, the LLM-based item attributes generation aims to produce
+space-unified, and informative item attributes. Our LLM-based side
+information augmentation paradigm consists of two steps:
+•i)User/Item Information Refinement. Using prompts derived
+from the dataset’s interactions and side information, we enable
+LLM to generate user and item attributes that were not originally
+part of the dataset. Specific examples are shown in Fig. 2(b)(c).
+•ii)LLM-enhanced Semantic Embedding. The augmented user
+and item information will be encoded as features and used as in-
+put for the recommender. Using LLM as an encoder offers efficient
+and state-of-the-art language understanding, enabling profiling
+user interaction preferences and debiasing item attributes.
+LLMRec: Large Language Models with Graph Augmentation for Recommendation
+ 
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+808
+
+--- Page 4 ---
+Incompleteness
+Noise
+Side Information IssuesHeterogeneityU-I Prompt
+LLM 
+Completion
+Augmented Training Data
+ Implicit Feedback Augmentor
+ Data Sparsity
+  Augmented Implicit Feedback Noise Pruning 
+ 
+Enhancing Augmented Features via MAE
+Masked GNN
+ Restoration
+Side Information Incorporation
+Projection
+GNN
+ Incorporation
+LLM
+Completion
+LLM
+Embedding
+Prompt
+User Profiling & Item Attribute Enhancing
+Augmented 
+Attribute
+Augmented Feature
+Mask Mask
+Figure 1: The LLMRec framework: (1) Three types of data augmentation strategies: i) augmenting user-item interactions; ii)
+enhancing item attributes, and iii) user profiling. (2) Augmented training with and denoised data robustification mechanism.
+Recommend user with 
+movies based on user 
+history   that each movie 
+with title, year, genre .
+History :
+Candidate:
+Output index of user's 
+favorite and dislike movie 
+from candidate.Please just 
+give the index in [].[332] Heart and Souls (1993), 
+Comedy|Fantasy
+[364] Men with Brooms(2002), 
+Comedy|Drama|Romance
+[121] The Vampire Lovers 
+(1970), Horror
+[155] Billabong Odyssey 
+(2003),Documentary
+[248] The Invisible Guest 
+2016, Crime, Drama, 
+Mystery
+248   121
+Provide the inquired information of the given movie .
+The inquired information is: director, country, 
+language. And please output them in form of: 
+director , country , language  [332] Heart and Souls (1993), Comedy|Fantasy
+Ron Underwood , USA , English
+Generate user profile based on the history of 
+user, that each movie with title, year, genre.
+History :
+Please output the following infomation of user, output 
+format:  {age:  , gender:  , liked genre:  , disliked genre:  , 
+liked directors:  , country:  , language:  }[332] Heart and Souls (1993), Comedy|Fantasy
+[364] Men with Brooms (2002), Comedy|Drama|Romance
+{age: 50 , gender: female , liked genre: 
+Comedy|Fantasy, Comedy|Drama|Romance, 
+disliked genre: Thriller, Horror, liked directors: 
+Ron Underwood, country:  Canada , United States , 
+language: English }
+(b)  User Profile
+(a)  Implicit Feedback (c)  Item Attribute
+Figure 2: Constructed prompt P𝑈𝐼𝑢,P𝑈𝑢,P𝐼
+𝑖for LLMs’ comple-
+tion including i) task description, ii) historical interactions,
+iii) candidates, and iv) output format description.
+Formally, the LLM-based side information augmentation is as:(
+𝑢𝑠𝑒𝑟 :A𝑢=𝐿𝐿𝑀(P𝑈𝑢) −→ fA,𝑢=𝐿𝐿𝑀(A𝑢)
+𝑖𝑡𝑒𝑚 :A𝑖=𝐿𝐿𝑀(P𝐼
+𝑖) −→ fA,𝑖=𝐿𝐿𝑀(A𝑖)(5)
+where fA,𝑢,fA,𝑖,∈R𝑑𝐿𝐿𝑀are LLM-augmented user/item features
+with LLM’s hidden dimension 𝑑𝐿𝐿𝑀. The textual prompts P𝑈𝑢andP𝐼
+𝑖
+are used for attribute refinement for user 𝑢and item𝑖, respectively.
+A𝑢andA𝑖represent generated textual attributes that to be encoded
+as features FA,𝑢,FA,𝑖using the embedding capability of 𝐿𝐿𝑀(·).
+3.2.2 Side Information Incorporation (Q3). After obtaining
+the augmented side information for user/item, an effective incorpo-
+ration method is necessary. LLMRec includes a standard procedure:
+(1) Augmented Semantic Projection, (2) Collaborative Context In-
+jection, and (3) Feature Incorporation. Let’s delve into each:
+•Augmented Semantic Projection. Linear layers with dropout
+are employed to not only reduce the dimensionality of LLM-
+enhanced semantic features but also map such augmented fea-
+tures into their own space [ 46]. This process can be represented
+asFA=Linear(FA), where fA∈R1×𝑑𝐿𝐿𝑀is the input feature
+andfA∈R1×𝑑is the output feature after projection.
+•Collaborative Context Injection. To inject high-order [ 41]
+collaborative connectivity into augmented features fA,𝑢and
+fA,𝑖, LLMRec employs light weight GNNs [11] as the encoder.
+•Semantic Feature Incorporation. Instead of taking augmented
+features FAas initialization of learnable vectors of recommender𝑓Θ, we opt to treat FAas additional compositions added to the
+ID-corresponding embeddings ( e𝑢,e𝑖). This allows flexibly adjust
+the influence of LLM-augmented features using scale factors and
+normalization. Formally, the FA’s incorporation is presented as:
+h𝑢=e𝑢+𝜔1·|M|+| A𝑢|∑︁
+𝑘∈M∪A𝑢f𝑘
+𝑢
+∥f𝑘
+𝑢∥2;h𝑖=e𝑖+𝜔1·|M|+| A𝑖|∑︁
+𝑘∈M∪A𝑖f𝑘
+𝑖
+∥f𝑘
+𝑖∥2
+The final prediction representations h𝑢andh𝑖, are in R1×𝑑. User
+profiles are A𝑢, debiased item attributes are A𝑖, and original multi-
+modal side information is M. The specific type of feature is f𝑘.
+We adjust feature vectors using the aggregation weight 𝜔1and𝐿2
+normalization to mitigate distribution gaps [ 8], ensurring the effec-
+tiveness of additional features within the recommender encoder.
+3.3 Training with Denoised Robustification (Q4)
+In this section, we outline how LLMRec integrate augmented data
+into the optimization. We also introduce two quality constraint
+mechanisms for augmented edges and node features: i) Noisy user-
+item interaction pruning, and ii) MAE-based feature enhancement.
+3.3.1 Augmented Optimization with Noise Pruning. We train
+our recommender using the union set E∪EA, which includes the
+original training set Eand the LLM-augmented set EA. The objec-
+tive is to optimize the BPR LBPRloss with increased supervisory
+signalsE∪EA, aiming to enhance the recommender’s performance
+by leveraging the incorporated LLM-enhanced user preference:
+LBPR=|E∪EA|∑︁
+(𝑢,𝑖+,𝑖−)−log 𝜎(ˆ𝑦𝑢,𝑖+−ˆ𝑦𝑢,𝑖−)+𝜔2·∥Θ∥2(6)
+EA⊆{𝐿𝐿𝑀(P𝑢)|𝑢∈U},|EA|=𝜔3∗𝐵
+The training triplet (𝑢,𝑖+,𝑖−)is selected from the union training
+setE∪EA. The predicted scores of positive-negative sample pairs
+are obtained through inner products of final representation h,i.e.,
+ˆ𝑦𝑢,𝑖+=h𝑢·h𝑖+,ˆ𝑦𝑢,𝑖−=h𝑢·h𝑖−. The augmented dataset EAis
+a subset of the overall LLM-generated data {𝐿𝐿𝑀(P𝑢)|𝑢∈U} ,
+obtained by sampling. This is because excessive inclusion of pseudo
+label may lead to a degradation in result accuracy. The number of
+samples|EA|is controlled by the batch size 𝐵and a rate𝜔3. Weight-
+decay regularization |Θ|2weighted by 𝜔2, mitigates overfitting. 𝜎(·)
+is activation function sigmoid to introduce non-linearity.
+Noise Pruning. To enhance the effectiveness of augmented data,
+we prune out unreliable u-i interaction noise. Technically, the
+largest values before minus are discarded after sorting each it-
+eration. This helps prioritize and emphasize relevant supervisory
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+ 
+Wei Wei et al.
+809
+
+--- Page 5 ---
+Figure 3: (a) Implicit feedback encompasses both false posi-
+tive and false negative samples. (b) The gradient ∇of the BPR
+loss for positive ˆ𝑦𝑢,𝑖+and negative ˆ𝑦𝑢,𝑖−scores, despite hav-
+ing a large magnitude, can have an incorrect direction that
+notably impacts the robustness and effectiveness of training.
+signals while mitigating the influence of noise. Formally, the objec-
+tiveLBPRin Eq. 6 with noise pruning can be rewritten as follows:
+(1−𝜔4)∗|E∪EA|∑︁
+(𝑢,𝑖+,𝑖−)−𝑆𝑜𝑟𝑡𝐴𝑠𝑐𝑒𝑛𝑑 log(𝜎(ˆ𝑦𝑢,𝑖+−ˆ𝑦𝑢,𝑖−))[0 :𝑁]+𝜔2·∥Θ∥2
+(7)
+The function 𝑆𝑜𝑟𝑡𝐴𝑠𝑐𝑒𝑛𝑑(·)[0 :𝑁]sorts values and selects the top-
+N. The retained number 𝑁is calculated by 𝑁=(1−𝜔4)·|E∪EA|,
+where𝜔4is a rate. This approach allows for controlled pruning of
+loss samples, emphasizing relevant signals while reducing noise.
+This can avoid the impact of unreliable gradient backpropagation,
+thus making optimization more stable and effective.
+3.3.2 Enhancing Augmented Semantic Features via MAE.
+To mitigate the impact of noisy augmented features, we employ the
+Masked Autoencoders (MAE) for feature enhancement [ 9]. Specifi-
+cally, the masking technique is to reduce the model’s sensitivity to
+features, and subsequently, the feature encoders are strengthened
+through reconstruction objectives. Formally, we select a subset of
+nodes eV⊂V and mask their features using a mask token [MASK],
+denoted as f[𝑀𝐴𝑆𝐾](e.g., a learnable vector or mean pooling). The
+mask operation can be formulated as follows:
+efA=(
+f[𝑀𝐴𝑆𝐾]𝑣∈eV
+fA𝑣∉eV(8)
+The augmented feature after the mask operation is denoted asefA.
+It is substituted as mask token f[𝑀𝐴𝑆𝐾]if the node is selected
+(eV ⊂V ), otherwise, it corresponds to the original augmented
+feature fA. To strengthen the feature encoder, we introduce the
+feature restoration loss L𝐹𝑅by comparing the masked attribute
+matrixefA,𝑖with the original augmented feature matrix fA, with a
+scaling factor 𝛾. The restoration loss function L𝐹𝑅is as follows:
+L𝐹𝑅=1
+|eV|∑︁
+𝑣∈fV(1−efA·fA
+∥efA∥·∥fA∥)𝛾(9)
+The final optimization objective is the weighted sum of the noise-
+pruned BPR lossLBPRand the feature restoration (FR) loss L𝐹𝑅.
+3.4 In-Depth Analysis of our LLMRec
+3.4.1 LLM-based Augmentation Facilitates Optimization.
+This section highlights challenges addressed by LLM-based augmen-
+tation in recommender systems. False negatives (non-interacted
+interactions) and false positives (noise) as in Fig. 3 (a) can affect dataTable 1: Statistics of the Original and Augmented Datasets
+Dataset Netflix MovieLens
+GraphOri.# U # I # E # U # I # E
+13187 17366 68933 12495 10322 57960
+Aug. # E: 26374 # E: 24990
+Ori. Sparsity 99.970% 99.915%
+Att.Ori. U: None I: year, title U: None I: title, year, genre
+Aug.U[1536]:age, gender, liked genre, disliked genre,
+liked directors, country, and language
+I[1536]: director, country, language
+Modality Textual[768], Visiual [512] Textual [768], Visiual [512]
+* Att. represents attribute, Ori. represents original, and Aug. represents augmentation. Number
+in [] represents the feature dimensionality.
+quality and result accuracy [ 3,40]. Non-interacted items do not
+necessarily imply dislike [ 3], and interacted one may fail to reflect
+real user preferences due to accidental clicks or misleading titles,
+etc. Mixing of unreliable data with true user preference poses a
+challenge in build accurate recommender. Identifying and utilizing
+reliable examples is key to optimizing the recommender [2].
+In theory, non-interacted and noisy interactions are used for neg-
+ative ˆ𝑦𝑢,𝑖−and positive ˆ𝑦𝑢,𝑖+scores, respectively. However, their
+optimization directions oppose the true direction with large magni-
+tudes, i.e., the model optimizes significantly in the wrong directions
+(as in Fig. 3 (b)), resulting in sensitive suboptimal results.
+Details. By computing the derivatives of the L𝐵𝑃𝑅( Eq. 10), we
+obtain positive gradients ∇𝑢,𝑖+=1−𝜎(ˆ𝑦𝑢+−)and negative gradients
+∇𝑢,𝑖−=𝜎(ˆ𝑦𝑢+−)−1, where ˆ𝑦𝑢+−=ˆ𝑦𝑢,𝑖+−ˆ𝑦𝑢,𝑖−. Fig. 3 (b) illustrates
+these gradients and unveils some observations. Noisy interactions,
+although treated as positives, often have small values ˆ𝑦𝑢,𝑖+as false
+positives, resulting in large gradients ∇𝑢,𝑖+. Conversely, unobserved
+items, treated as negatives, tend to have relatively large values ˆ𝑦𝑢,𝑖−
+as false negatives, leading to small ˆ𝑦𝑢+−and large gradients ∇𝑢,𝑖−.
+ 
+∇𝑢,𝑖+=𝜕L𝐵𝑃𝑅
+𝜕ˆ𝑦𝑢,𝑖+=−𝜕log𝜎(ˆ𝑦𝑢+−)
+𝜕𝜎(ˆ𝑦𝑢+−)𝜕𝜎(ˆ𝑦𝑢+−)
+𝜕ˆ𝑦𝑢,𝑖+
+=−1
+𝜎(ˆ𝑦𝑢+−)·𝜎(ˆ𝑦𝑢+−)·(1−𝜎(ˆ𝑦𝑢+−))·1=𝜎(𝑛𝑜𝑖𝑠𝑦
+z}|{
+ˆ𝑦𝑢,𝑖+−ˆ𝑦𝑢,𝑖−)−1
+∇𝑢,𝑖−=𝜕L𝐵𝑃𝑅
+𝜕ˆ𝑦𝑢,𝑖−=−𝜕log𝜎(ˆ𝑦𝑢+−)
+𝜕𝜎(ˆ𝑦𝑢+−)𝜕𝜎(ˆ𝑦𝑢+−)
+𝜕ˆ𝑦𝑢,𝑖−
+=1
+𝜎(ˆ𝑦𝑢+−)·𝜎(ˆ𝑦𝑢+−)·(1−𝜎(ˆ𝑦𝑢+−))·1=1−𝜎(ˆ𝑦𝑢,𝑖+−𝑢𝑛𝑜𝑏𝑠𝑒𝑟𝑣𝑒𝑑
+z}|{
+ˆ𝑦𝑢,𝑖−)
+(10)
+Conclusion. Wrong samples possess incorrect directions but are in-
+fluential. LLM-based augmentation uses the natural language space
+to assist the ID vector space to provide a comprehensive reflection
+of user preferences. With real-world knowledge, LLMRec gets qual-
+ity samples, reducing the impact of noisy and unobserved implicit
+feedback, improving accuracy, and speeding up convergence.
+3.4.2 Time Complexity. We analyze the time complexity. The
+projection of augmented semantic features has a time complexity
+ofO(|U∪I|× 𝑑𝐿𝐿𝑀×𝑑). The GNN encoder for graph-based
+collaborative context learning takes O(𝐿×|E+|×𝑑)time. The BPR
+loss function computation has a time complexity of O(𝑑×|E∪
+EA|), while the feature reconstruction loss has a time complexity
+ofO(𝑑×|eV|), where|eV|represents the count of masked nodes.
+LLMRec: Large Language Models with Graph Augmentation for Recommendation
+ 
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+810
+
+--- Page 6 ---
+4 EVALUATION
+To evaluate the performance of LLMRec, we conduct experiments,
+aiming to address the following research questions:
+•RQ1: How does our LLM-enhanced recommender perform com-
+pared to the current state-of-the-art baselines?
+•RQ2: What is the impact of key components on the performance?
+•RQ3: How sensitive is the model to different parameters?
+•RQ3: Are the data augmentation strategies in our LLMRec appli-
+cable across different recommendation models?
+•RQ5: What is the computational cost associated with our devised
+LLM-based data augmentation schemes?
+4.1 Experimental Settings
+4.1.1 Datasets. We perform experiments on publicly available
+datasets, i.e., Netflix and MovieLens, which include multi-modal side
+information. Tab. 1 presents statistical details for both the original
+and augmented datasets for both user and item domains. Movie-
+Lens. We utilize the MovieLens dataset derived from ML-10M1.
+Side information includes movie title, year, and genre in textual
+format. Visual content consists of movie posters obtained through
+web crawling by ourselves. Netflix. We collected its multi-model
+side information through web crawling. The implicit feedback and
+basic attribute are sourced from the Netflix Prize Data2on Kaggle.
+For both datasets, CLIP-ViT[ 31] is utilized to encode visual features.
+LLM-based Data Augmentation. The study employs the OpenAI
+package, accessed through LLMs’ APIs, for augmentation. The Ope-
+nAI Platform documentation provides details3. Augmented implicit
+feedback is generated using the "gpt-3.5-turbo-0613" chat comple-
+tion model. Item attributes such as directors, country, and language
+are gathered using the same model. User profiling, based on the
+"gpt-3.5-turbo-16k" model, includes age, gender, preferred genre,
+disliked genre, preferred directors, country, and language. Embed-
+ding is performed using the "text-embedding-ada-002" model. The
+approximate cost of augmentation strategies on two datasets is
+15.65 USD, 20.40 USD, and 3.12 USD, respectively.
+4.1.2 Implementation Details. The experiments are conducted
+on a 24 GB Nvidia RTX 3090 GPU using PyTorch[ 29] for code im-
+plementation. The AdamW optimizer[ 25] is used for training, with
+different learning rate ranges of [5 𝑒−5,1𝑒−3] and [2.5𝑒−4,9.5𝑒−4]
+for Netflix and MovieLens, respectively. Regarding the parameters
+of the LLMs, we choose the temperature from larger values {0.0,
+0.6, 0.8, 1 } to control the randomness of the generated text. The
+value of top-p is selected from smaller values {0.0, 0.1, 0.4, 1} to
+encourage probable choices. The stream is set to false to ensure
+the completeness of responses. For more details on the parameter
+analysis, please refer to Section 4.4. To maintain fairness, both our
+method and the baselines employ a unified embedding size of 64.
+4.1.3 Evaluation Protocols. We evaluate our approach in the
+top-K item recommendation task using three common metrics:
+Recall (R@k), Normalized Discounted Cumulative Gain (N@k), and
+Precision (P@k). To avoid potential biases from test sampling, we
+employ the all-ranking strategy[ 47,49]. We report averaged results
+from five independent runs, setting K to 10, 20, and 50 (reasonable
+1https://files.grouplens.org/datasets/movielens/ml-10m-README.html
+2https://www.kaggle.com/datasets/netflix-inc/netflix-prize-data
+3https://platform.openai.com/docs/api-referencefor all-ranking). Statistical significance analysis is conducted by
+calculating𝑝-values against the best-performing baseline.
+4.1.4 Baseline Description. Four distinct groups of baseline
+methods for thorough comparison. i) General CF Methods: MF-
+BPR [34],NGCF [41] and LightGCN [11]. ii) Methods with Side
+Information: VBPR [10],MMGCN [50] and GRCN [49]. iii) Data
+Augmentation Methods: LATTICE [59]. iv) Self-supervised Meth-
+ods:CLCRec [48], MMSSL [45] and MICRO [58].
+4.2 Performance Comparison (RQ1)
+Tab. 2 compares our proposed LLMRec method with baselines.
+•Overall Model Superior Performance. Our LLMRec outper-
+forms the baselines by explicitly augmenting u-i interactive edges
+and enhancing the quality of side information. It is worth men-
+tioning that our model based on LATTICE’s [ 59] encoder, con-
+sisting of a ID-corresponding encoder and a feature encoder. This
+improvement underscores the effectiveness of our framework.
+•Effectiveness of Side Information Incorporation. The in-
+tegration of side information significantly empowers recom-
+menders. Methods like MMSSL [ 45] and MICRO [ 58] stand out
+for their effective utilization of multiple modalities of side in-
+formation and GNNs. In contrast, approaches rely on limited
+content, such as VBPR [ 10] using only visual features, or CF-
+based architectures like NGCF [ 41], without side information,
+yield significantly diminished results. This highlights the impor-
+tance of valuable content, as relying solely on ID-corresponding
+records fails to capture the complete u-i relationships.
+•Inaccurate Augmentation yields Limited Benefits. Existing
+methods, such as LATTICE[ 59], MICRO[ 58] that also utilize side
+information for data augmentation have shown limited improve-
+ments compared to our LLMRec. This can be attributed to two
+main factors: (1) The augmentation of side information with ho-
+mogeneous relationships (e.g., i-i or u-u) may introduce noise,
+which can compromise the precise of user preferences. (2) These
+methods often not direct augmentation of u-i interaction data.
+•Advantage over SSL Approaches. Self-supervised models like,
+MMSSL[ 45], MICRO[ 58], have shown promising results in ad-
+dressing sparsity through SSL signals. However, they do not
+surpass the performance of LLMRec, possibly because their aug-
+mented self-supervision signals may not align well with the target
+task of modeling u-i interactions. In contrast, we explicitly tackle
+the scarcity of training data by directly establishing BPR triplets.
+4.3 Ablation and Effectiveness Analyses (RQ2)
+We conduct an ablation study of our proposed LLMRec approach
+to validate its key components, and present the results in Table 3.
+4.3.1 Effectiveness of Data Augmentation Strategies.
+•(1).w/o-u-i: Disabling the LLM-augmented implicit feedback EA
+results in a significant decrease. This indicates that LLMRec in-
+creases the potential supervision signals by including contextual
+knowledge, leading to a better grasp of user preferences.
+•(2).w/o-u: Removing our augmentor for user profiling result in a
+decrease in performance, indicating that our LLM-enhanced user
+side information can effectively summarize useful user preference
+profile using historical interactions and item-end knowledge.
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+ 
+Wei Wei et al.
+811
+
+--- Page 7 ---
+Table 2: Performance comparison on different datasets in terms of Recall @10/20/50, and NDCG @10/20/50, and Precision @20.
+BaselineNetflix MovieLens
+R@10 N@10 R@20 N@20 R@50 N@50 P@20 R@10 N@10 R@20 N@20 R@50 N@50 P@20
+General Collaborative Filtering Methods
+MF-BPR 0.0282 0.0140 0.0542 0.0205 0.0932 0.0281 0.0027 0.1890 0.0815 0.2564 0.0985 0.3442 0.1161 0.0128
+NGCF 0.0347 0.0161 0.0699 0.0235 0.1092 0.0336 0.0032 0.2084 0.0886 0.2926 0.1100 0.4262 0.1362 0.0146
+LightGCN 0.0352 0.0160 0.0701 0.0238 0.1125 0.0339 0.0032 0.1994 0.0837 0.2660 0.1005 0.3692 0.1209 0.0133
+Recommenders with Side Information
+VBPR 0.0325 0.0142 0.0553 0.0199 0.1024 0.0291 0.0028 0.2144 0.0929 0.2980 0.1142 0.4076 0.1361 0.0149
+MMGCN 0.0363 0.0174 0.0699 0.0249 0.1164 0.0342 0.0033 0.2314 0.1097 0.2856 0.1233 0.4282 0.1514 0.0147
+GRCN 0.0379 0.0192 0.0706 0.0257 0.1148 0.0358 0.0035 0.2384 0.1040 0.3130 0.1236 0.4532 0.1516 0.0150
+Data Augmentation Methods
+LATTICE 0.0433 0.0181 0.0737 0.0259 0.1301 0.0370 0.0036 0.2116 0.0955 0.3454 0.1268 0.4667 0.1479 0.0167
+MICRO 0.0466 0.0196 0.0764 0.0271 0.1306 0.0378 0.0038 0.2150 0.1131 0.3461 0.1468 0.4898 0.1743 0.0175
+Self-supervised Methods
+CLCRec 0.0428 0.0217 0.0607 0.0262 0.0981 0.0335 0.0030 0.2266 0.0971 0.3164 0.1198 0.4488 0.1459 0.0158
+MMSSL 0.0455 0.0224 0.0743 0.0287 0.1257 0.0383 0.0037 0.2482 0.1113 0.3354 0.1310 0.4814 0.1616 0.0170
+LLMRec 0.0531 0.0272 0.0829 0.0347 0.1382 0.0456 0.0041 0.2603 0.1250 0.3643 0.1628 0.5281 0.1901 0.0186
+p-value 2.9 𝑒−43.0𝑒−39.4𝑒−51.5𝑒−32.8𝑒−52.2𝑒−33.4𝑒−52.8𝑒−51.6𝑒−23.1𝑒−34.1𝑒−41.9𝑒−31.3𝑒−21.8𝑒−3
+Improv. 13.95% 21.43% 8.51% 20.91% 5.82% 19.06% 7.89% 4.88% 10.52% 5.26% 10.90% 7.82% 9.06% 6.29%
+Table 3: Ablation study on key components (i.e., data augmen-
+tation strategies, denoised data robustification mechanisms)
+Metrics R@10 N@10 R@20 N@20 R@50 N@50 P@20Aug.w/o-u-i 0.0477 0.0239 0.0791 0.0317 0.1376 0.0432 0.0037
+w/o-u 0.0423 0.0196 0.0656 0.0255 0.1192 0.0360 0.0033
+w/o-u&i 0.0309 0.0127 0.0602 0.0202 0.1051 0.0289 0.0030Q. C.w/o-prune 0.0504 0.0258 0.0786 0.0328 0.1363 0.0447 0.0039
+w/o-QC 0.0488 0.0244 0.0786 0.0318 0.1279 0.0416 0.0038
+LLMRec 0.0531 0.0272 0.0829 0.0347 0.1382 0.0456 0.0041
+* “Aug”: data augmentation operations; Q. C.: denoised data robustification.
+•(3).w/o-u&i: when we remove the augmented side information
+for both users and items ( FA,𝑢,FA,𝑖,1), lower recommendation
+accuracy is observed. This finding indicates that the LLM-based
+augmented side information provides valuable augmented data
+to the recommender system, assisting in obtaining quality and
+informative representations.
+4.3.2 Impact of the Denoised Data Robustification.
+•w/o-prune : The removal of noise pruning results in worse perfor-
+mance. This suggests that the process of removing noisy implicit
+feedback signals helps prevent incorrect gradient descent.
+•w/o-QC : The performance suffer when both the limits on im-
+plicit feedback and semantic feature quality are simultaneously
+removed (i.e., w/o-prune + w/o-MAE ). This indicates the benefits
+of our denoised data robustification mechanism by integrating
+noise pruning and semantic feature enhancement.
+4.4 Hyperparameter Analysis (RQ3)
+4.4.1 Parameters Affecting Augmented Data Quality.
+•Temperature 𝜏of LLM : The temperature parameter 𝜏affects text
+randomness. Higher values (>1.0) increase diversity and creativ-
+ity, while lower values (<0.1) result in more focus. We use 𝜏from
+{0,0.6,0.8,1}. As shown in Table 4, increasing 𝜏initially improves
+most metrics, followed by a decrease.Table 4: Parameter analysis of temperature 𝜏and top-p𝜌.
+Para. Temperature 𝜏 Top-p𝜌
+Metrics𝜏=0𝜏=0.6𝜏=0.8𝜏=1𝜌=0𝜌=0.1𝜌=0.4𝜌=1
+R@10 0.0558↑0.0531 0.0553↑0.0531= 0.0537↑0.0531 0.0520↓0.0531=
+R@20 0.0808↓0.0829 0.0813↓0.0775↓0.0802↓0.0829 0.0796↓0.0770↓
+R@50 0.1344↓0.1382 0.1360↓0.1312↓0.1360↓0.1382 0.1344↓0.1333↓
+Table 5: Analysis of key parameter (i.e., # candidate |C|) for
+LLM w.r.t implicit feedback augmentation EA.
+Data Netflix MovieLens
+Metrics|C|=3|C|=10|C|=30|C|=3|C|=10|C|=30
+R@20 0.0786↓0.0829 0.0808↓ 0.3567↓0.3643 0.3695↑
+N@20 0.0314↓0.0347 0.0330↓ 0.1603↓0.1628 0.1614↓
+P@20 0.0039↓0.0041 0.0040↓ 0.0179↓0.0186 0.0182↓
+•Top-p𝑝of LLM : Top-p Sampling[ 12] selects tokens based on a
+threshold determined by the top-p parameter 𝑝. Lower𝑝values
+prioritize likely tokens, while higher values encourage diversity. We
+use𝑝from{0,0.1,0.4,1}and smaller 𝑝values tend to yield better
+results, likely due to avoiding unlisted candidate selection. Higher
+𝜌values cause wasted tokens due to repeated LLM inference.
+•# of CandidateC:We useCto limit item candidates for LLM-based
+recommendation.{3,10,30}are explored due to cost limitations,
+and Table 5 shows that C=10yields the best results. Small values
+limit selection, and large values increase recommendation difficulty.
+•Prune Rate𝜔4:LLMRec uses 𝜔4to control noise in augmented
+training data to be pruned. We set 𝜔4to {0.0, 0.2, 0.4, 0.6, 0.8} on
+both datasets. As shown in Fig. 4 (a), 𝜔4=0yields the worst result,
+highlighting the need to constrain noise in implicit feedback.
+4.4.2 Sensitivity of Recommenders to the Augmented Data.
+•# of Augmented Samples per Batch |EA|: LLMRec uses 𝜔3and
+batch size𝐵to control the number of augmented BPR training
+data samples per batch. 𝜔3is set to {0.0, 0.1, 0.2, 0.3, 0.4} on Netflix
+and {0.0, 0.2, 0.4, 0.6, 0.8} on MovieLens. Suboptimal results occur
+LLMRec: Large Language Models with Graph Augmentation for Recommendation
+ 
+WSDM ’24, March 4–8, 2024, Merida, Mexico
+812
+
+--- Page 8 ---
+0.0 0.2 0.4 0.6 0.8
+Prune Rate 4
+0.0740.0760.0780.080Netflix R@20
+Netflix
+0.0 0.2 0.4 0.6 0.8
+Prune Rate 4
+0.0300.0310.0320.0330.034Netflix N@20
+Netflix
+0.0 0.2 0.4 0.6 0.8
+Prune Rate 4
+0.00360.00370.00380.00390.0040Netflix P@20
+Netflix
+x1 x2 x3 x4 x5
+# Augmented | |
+0.0650.0700.0750.080Netflix R@20
+Netflix
+x1 x2 x3 x4 x5
+# Augmented | |
+0.0200.0250.0300.035Netflix N@20
+Netflix
+x1 x2 x3 x4 x5
+# Augmented | |
+0.00320.00340.00360.00380.0040Netflix P@20
+Netflix
+x1 x2 x3 x4 x5
+Augmented Scale 1
+0.02250.02500.02750.03000.03250.0350Netflix R@20
+Netflix
+x1 x2 x3 x4 x5
+Augmented Scale 1
+0.02250.02500.02750.03000.03250.0350Netflix N@20
+Netflix
+x1 x2 x3 x4 x5
+Augmented Scale 1
+0.00340.00360.00380.0040Netflix P@20
+Netflix0.3500.3550.3600.365
+MovieLens R@20
+MovieLens
+0.1350.1400.1450.1500.1550.160
+MovieLens N@20
+MovieLens
+0.01740.01760.01780.01800.0182
+MovieLens P@20
+MovieLens
+0.340.350.36
+MovieLens R@20
+MovieLens
+0.1500.1550.1600.165
+MovieLens N@20
+MovieLens
+0.01740.01760.01780.01800.01820.0184
+MovieLens P@20
+MovieLens
+0.1450.1500.1550.160
+MovieLens R@20
+MovieLens
+0.1450.1500.1550.160
+MovieLens N@20
+MovieLens
+0.017250.017500.017750.018000.01825
+MovieLens P@20
+MovieLensFigure 4: Impact of hyperparameters (i.e., prune rate 𝜔4, #
+augmented BPR training data |EA|, and augmented feature
+incorporate scale 𝜔1).
+Table 6: Model-agnostic experiment to evaluate the effective-
+ness of LLM-based data augmentation on different recom-
+mender in terms of R@20, N@20, and P@20.
+Method LATTICE MICRO MMSSLAug.R@20 0.0821↑11.40% 0.0835 ↑9.29%
+0.0833↑11.11%
+N@20 0.0287↑10.81% 0.0301↑11.07% 0.0313 ↑9.06%
+P@20 0.0039↑8.33% 0.0041↑7.89% 0.0041↑10.81%
+when𝜔3is zero or excessively large. Increasing diversity and
+randomness can lead to a more robust gradient descent.
+•Scale𝜔2for Incorporating Augmented Features : LLMRec uses 𝜔2
+to control feature magnitude, with values set to {0.0, 0.8, 1.6, 2.4,
+3.2} on Netflix and {0.0, 0.1, 0.2, 0.3, 0.4} on MovieLens. Optimal
+results depend on the data, with suboptimal outcomes occurring
+when𝜔2is too small or too large, as shown in Fig. 4 (c).
+4.5 Model-agnostic Property (RQ4)
+We conducted model-agnostic experiments on Netflix to validate the
+applicability of our data augmentation. Specifically, we incorporated
+the augmented implicit feedback EAand features FA,𝑢,FA,𝑖into
+baselines MICRO, MMSSL, and LATTICE. As shown in Tab. 6, our
+LLM-based data improved the performance of all models, demon-
+strating their effectiveness and reusability. Some results didn’t sur-
+pass our model, maybe due to: i) the lack of a quality constraint
+mechanism to regulate the stability and quality of the augmented
+data, and ii) the absence of modeling collaborative signals in the
+same vector space, as mentioned in Sec. 3.2.2.
+4.6 Cost/Improvement Conversion Rate (RQ5)
+To evaluate the cost-effectiveness of our augmentation strategies,
+we compute the CIR as presented in Tab. 7. The CIR is compared
+with the ablation of three data augmentation strategies and the best
+baseline from Tab. 3 and Tab. 2. The cost of the implicit feedback
+augmentor refers to the price of GPT-3.5 turbo 4K. The cost of
+side information augmentation includes completion (using GPT-3.5
+turbo 4K or 16K) and embedding (using text-embedding-ada-002).
+We utilize the HuggingFace API tool for tokenizer and counting. The
+results in Tab. 7 show that ’U’ (LLM-based user profiling) is the most
+cost-effective strategy, and the overall investment is worthwhile.Table 7: Comparison of the cost and improvement rate(CIR)
+of data augmentation strategies and LLMRec. ’Cost’: expen-
+diture of utilizing LLM, ’Imp.’: the average improvement rate
+in R@10/N@10. ’CIR’: the ratio of improvement to cost.
+R@10 N@10
+Cost(USD) Imp.(%) CIR(%) Imp.(%) CIR(%)
+U 10.92 25.53 233.79 38.78 355.13
+I 1.96 2.31 117.86 1.12 57.14
+U-I 8.26 11.32 137.05 13.81 167.19
+LLMAug 21.14 13.95 65.99 21.43 101.37
+5 RELATED WORK
+Content-based Recommendation. Existing recommenders have
+explored the use of auxiliary multi-modal side knowledge[ 21,22],
+with methods like VBPR [ 10] combine traditional CF with visual
+features, while MMGCN [ 50], GRCN [ 49] leverage GNNs to cap-
+ture modality-aware higher-order collaborative signals. Recent ap-
+proaches MMSSL [ 45] and MICRO [ 58] align modal signals with
+collaborative signals through contrastive SSL[ 19], revealing the
+informative aspects of modal signals that benefit recommendations.
+However, the data noise, heterogeneity, and incompleteness can
+introduce bias. To overcome this, LLMRec explores LLM-based aug-
+mentation to improve the quality of the data.
+Large Language Models (LLMs) for Recommendation. LLMs
+have gained attention in recommendation systems, with various
+efforts to use them for modeling user behavior [ 14,32,42]. LLMs
+have been employed as an inference model in diverse recommenda-
+tion tasks, including rating prediction, sequential recommendation,
+and direct recommendation [ 1,5,6,57]. Some efforts [ 35,38] also
+tried to utilize LLMs to model structure relations. However, most
+previous methods primarily used LLMs as recommenders, abandon-
+ing the base model that has been studied for decades. We combine
+LLM-based data augmentation with classic CF, achieving both re-
+sult assurance and enhancement concurrently.
+Data Augmentation for Recommendation. Extensive research
+has explored data augmentation in recommendation systems [ 13,
+16]. Various operations, such as permutation, deletion, swap, inser-
+tion, and duplication, have been proposed for sequential recommen-
+dation [ 24,30]. Commonly used techniques include counterfactual
+reasoning [ 43,60] and contrastive learning [ 23]. Our LLMRec use
+LLMs as an inference model to augment edge and enhance node
+features by leveraging consensus knowledge from the large model.
+6 CONCLUSION
+This study focuses on the design of LLM-enhanced models to ad-
+dress the challenges of sparse implicit feedback signals and low-
+quality side information by profiling user interaction preferences
+and debiasing item attributes. To ensure the quality of augmented
+data, a denoised augmentation robustification mechanism is intro-
+duced. The effectiveness of LLMRec is supported by theoretical
+analysis and experimental results, demonstrating its superiority
+over state-of-the-art recommendation techniques on benchmark
+datasets. Future directions for investigation include integrating
+causal inference into side information debiasing and exploring
+counterfactual factors for context-aware user preference.
