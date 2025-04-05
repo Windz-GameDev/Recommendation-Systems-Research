@@ -1,293 +1,177 @@
-# LLM-enhanced Traditional Algorithms Recommendation System Framework for GRE Research Project
+# LLM-enhanced Traditional Algorithms Recommendation System Framework
 
 ## Introduction
 
-This project is an LLM-enhanced movie recommendation system that combines traditional recommendation algorithms like SVD with the power of Large Language Models (LLMs) to provide personalized and context-aware movie suggestions.
-Our work is part of a GRE research project at the University of North Florida by myself and Dr. Ayan Dutta.
+This GRE Research Experience project combines traditional recommendation algorithms with Large Language Models (LLMs) to provide personalized and context-aware movie recommendations. Optimized to work efficiently with compact models like Phi-4 running locally through KoboldCPP, the system demonstrates significant improvements in recommendation quality across multiple metrics compared to traditional SVD methods alone.
 
 ## Key Features
 
-1. **Scalable Architecture**: The recommendation system is designed to handle large-scale datasets and can efficiently process millions of movies and user interactions, ensuring a smooth and responsive user experience.
+1. **Small Model Optimization**: Specifically designed to work efficiently with Phi-4 running locally through KoboldCPP with context shifting to reduce reprocessing.
 
-2. **User Preference Input**: Users provide their movie preferences by rating a set of movies they love. This information is used to understand their tastes and serve as input for the SVD algorithm. Additionally users will describe what they are looking for in movies, and this will be compared to descriptions of the top N \* 10^M recommendations of the traditional algorithm to find even more tailored matches.
+2. **Hybrid Architecture**: Combines traditional collaborative filtering algorithms with LLM-based content understanding for improved recommendations.
 
-3. **Traditional Recommendation Algorithms**: At the core of our system, we utilize proven recommendation algorithms like SVD to generate initial movie recommendations based on user ratings and preferences.
+3. **Multiple Algorithm Support**: Implements SVD, SVD++, KNN, BiVAE, and LightGCN algorithms with LLM enhancement.
 
-4. **IMDb Integration**: Our system seamlessly integrates with the IMDb database to retrieve rich movie information, including descriptions, plots, and reviews. This additional context is used by the LLMs to generate more accurate similarity scores and provide comprehensive movie details to users.
+4. **Comprehensive Evaluation**: Provides detailed metrics including NDCG, MAP, Precision, Recall, Hit Rate, and Cumulative Hit Rate.
 
-5. **LLM-enhanced Fuzzy Matching**: To improve the accuracy of movie identification, we employ LLMs to perform fuzzy matching of movie titles. This allows our system to handle variations in user input and find the closest matches even when exact titles are not provided.
+5. **Personalization**: Uses LLM-based similarity scoring between user preferences and movie descriptions.
 
-6. **LLM-Powered Similarity Scoring**: We take the recommendation process a step further by using LLMs to generate similarity scores between user preferences summaries and movie descriptions. This enables us to better match user interests with relevant movies, enhancing the personalization of recommendations.
+6. **IMDb Integration**: Retrieves movie descriptions, ratings, and popularity scores to enhance recommendation quality.
 
-7. **Personalized Recommendations**: By combining the strengths of traditional recommendation algorithms like SVD with the advanced capabilities of LLMs, our system generates highly personalized movie recommendations tailored to each user's unique tastes and preferences.
+7. **Scalable Design**: Works with both small datasets (MovieLens Small) and large datasets (MovieLens 32M).
+
+## Local LLM Optimization
+
+- **KoboldCPP Integration**: Designed to work seamlessly with KoboldCPP for local LLM hosting
+- **Context Shifting**: Prompts are sent and ordered in such a way that instead of processing approximately 1000-1500 tokens each time, only approximately 100 tokens are processed for the vast majority of prompts due to Kobold's Context Shifting.
+- **Reduced Reprocessing**: Caches movie descriptions and user preferences to minimize redundant LLM calls
+- **Few-shot Learning**: Uses carefully crafted few-shot examples to guide smaller models toward consistent similarity scoring with retry in case of failure and regex searching of responses to extract the nuerical scores
+- **Optimized Prompts**: Streamlined prompts that maximize performance on small models while minimizing token usage
+
+## Recent Results
+
+Our recent experiments with the MovieLens-Latest-Small dataset demonstrate significant improvements when using LLM enhancement:
+
+### Ranking Metrics (K=10)
+
+| Algorithm | NDCG@10 | MAP@10 | Precision@10 | Recall@10 |
+| --------- | ------- | ------ | ------------ | --------- |
+| SVD       | 0.090   | 0.042  | 0.078        | 0.026     |
+| SVD LLM   | 0.157   | 0.080  | 0.130        | 0.051     |
+| SVD++     | 0.090   | 0.045  | 0.081        | 0.023     |
+| SVD++ LLM | 0.160   | 0.085  | 0.130        | 0.050     |
+
+### Hit Rate Comparison
+
+| Metric                      | SVD LLM  | SVD      | Improvement |
+| --------------------------- | -------- | -------- | ----------- |
+| Hit Rate N@1                | 0.008197 | 0.001639 | 5.0x        |
+| Hit Rate N@5                | 0.015847 | 0.006557 | 2.4x        |
+| Hit Rate N@10               | 0.018579 | 0.009290 | 2.0x        |
+| Cumulative Hit (≥ 4.0) N@1  | 0.011662 | 0.001944 | 6.0x        |
+| Cumulative Hit (≥ 4.0) N@5  | 0.024295 | 0.008746 | 2.8x        |
+| Cumulative Hit (≥ 4.0) N@10 | 0.029155 | 0.011662 | 2.5x        |
+
+### Performance Averages
+
+| Metric                      | SVD      | SVD LLM  | SVD++    | SVD++ LLM |
+| --------------------------- | -------- | -------- | -------- | --------- |
+| Average Hit Rate            | 0.005829 | 0.014208 | 0.004372 | 0.009836  |
+| Average Cumulative Hit Rate | 0.007451 | 0.021704 | 0.006575 | 0.017094  |
 
 ## How It Works
 
-1. **Data Preparation**: The system begins by loading the MovieLens dataset, which contains user ratings, movie information, and links to IMDb. It establishes mappings between MovieLens movie IDs, IMDb IDs, and movie titles to facilitate seamless data integration. The user can choose between the 32M size dataset and the 100k size dataset, depending on their computational resources and desired dataset size.
+1. **Data Preparation**: The system loads movie ratings, metadata, and IMDb links.
 
-2. **User Preference Input**: Users provide their movie preferences by rating a set of movies they love. This information is used to understand their tastes and serve as input for both the SVD algorithm.
+2. **User Preference Input**: Users provide ratings and preferences which are used as input for both traditional algorithms and LLM enhancement.
 
-3. **Traditional Recommendation Algorithm**: We employ the SVD algorithm to generate initial movie recommendations based on user ratings and preferences. SVD identifies latent factors that capture the underlying patterns in user-movie interactions, allowing for effective recommendation generation.
+3. **Base Recommendations**: Traditional algorithms (SVD, SVD++, KNN, BiVAE, LightGCN) generate initial recommendations.
 
-4. **Movie Description Retrieval**: For each movie in the N \* 10 recommendations generated by the SVD algorithm, the system retrieves the corresponding movie descriptions from the IMDb database using the Cinemagoer API. If an exact match is not found, LLMs are employed for fuzzy matching to find the closest match, ensuring comprehensive movie information is available. If a description can't be found, then the system will generate one with an LLM that comes close in quality to one that has been handwritten.
+4. **Movie Description Retrieval**: Descriptions are retrieved from IMDb or generated using LLMs when unavailable, then cached to avoid redundant processing.
 
-5. **LLM-enhanced Similarity Scoring**: The system uses LLMs to generate similarity scores between a user's preferences summary (either manually inputed by the user or generated by an LLM based off that user's top ten or less rated movies) and each movie description in the top N \* 10 recommendations given by SVD. It constructs prompts for the LLM using few-shot examples to guide the model in generating accurate similarity scores. These scores are used to refine and personalize the recommendations generated by the SVD algorithm.
+5. **LLM-enhanced Similarity Scoring**: Using context-shifted prompts optimized for easy understanding by small models, LLMs generate similarity scores between user preferences and movie descriptions.
 
-6. **Recommendation Generation**: By combining the recommendations from the SVD algorithm with the similarity scores generated by the LLMs, the system identifies the top N movies that align with the user's preferences. These movies are then presented as personalized recommendations to the user.
+6. **Recommendation Refinement**: Base recommendations are refined using LLM-generated similarity scores and weighted hybrid approaches.
 
-7. **API Integration**: The recommendation system is designed to work with a locally running LLM model that exposes an OpenAI-compatible API. This allows seamless integration and communication between the recommendation system and the LLM model, enabling efficient processing of movie descriptions and similarity scoring. That being said, the system can be easily made to work with OpenAI's API if the program is run in production mode and you've set up your API key.
+7. **Comprehensive Evaluation**: The system calculates various metrics to quantify recommendation quality.
 
-## Future Goals
+## Evaluation Methods
 
-Our research has identified several areas for future improvement and expansion of the LLM-enhanced Movie Recommendation System:
+The system supports multiple evaluation approaches:
 
-1. **Incorporating Additional Context in User Preference Summaries**: We plan to enhance user preference summaries by including more detailed information such as user's preferred movie release date range, genres, and main cast members. This additional context will help improve the accuracy of similarity scoring between user preferences and movie descriptions.
+1. **Leave-One-Out Validation**: Calculates hit rates by removing one item per user.
 
-2. **Expanding Movie Descriptions**: We aim to enrich movie descriptions by incorporating factors such as IMDb's popularity ranks and main cast members. This will address user feedback about unfamiliar movies and actors in recommendations, thereby increasing user confidence in the system's suggestions.
+2. **Stratified Train-Test Split with Ranking Metrics**: Uses 75/25 split to evaluate NDCG, MAP, Precision, Recall.
 
-3. **Utilizing Popularity and Cast Similarity**: By instructing the LLM to consider popularity ranks and similar casts as factors in similarity scoring, we can better align recommendations with user interests and preferences.
+3. **Stratified Train-Test Split with Rating Metrics**: Uses 75/25 split to evaluate RMSE, MAE, R², Explained Variance.
 
-4. **Optimizing for Smaller, Efficient Models**: Our goal is to make the framework efficient by using smaller, cost-effective models that can run locally. This will reduce dependency on external APIs, minimize internet traffic, and maintain speed and affordability.
+4. **Combined Evaluation**: Performs both ranking and rating metrics evaluation.
 
-5. **Enhancing Framework Independence**: Given the high dependency on LLMs, we aim to optimize the framework to handle multiple users efficiently without excessive API calls. This involves refining the framework to work seamlessly with compact models, ensuring it remains practical for large-scale deployment.
-
-6. **Balancing Traditional and LLM-enhanced Recommendations**: While the framework enhances traditional algorithms, it is not intended to replace them entirely. Instead, it offers streaming customers a way to refine recommendations by providing specific tastes and interests, thereby improving the prediction results of existing algorithms.
-
-7. **Attempt to Improve Similarity Score Conversion from LLM to Floating Point.**: The system sometimes fails to correct convert similarity scores to floating point, resulting into movies which should have a higher similarity score than the actual movies recommended not being recommended first.
-
-These goals are designed to improve the system's performance, user satisfaction, and scalability, ensuring it remains a valuable tool for personalized movie recommendations.
-
-8.  Create a results table including the following data
-
-| Metric                       | KNN | SVD | SVD++ | SVD LLM | SVD++ LLM | KNN LLM |
-| ---------------------------- | --- | --- | ----- | ------- | --------- | ------- |
-| Hit Rate N@1                 |     |     |       |         |           |         |
-| Hit Rate N@5                 |     |     |       |         |           |         |
-| Hit Rate N@10                |     |     |       |         |           |         |
-| Cumulative Hit (>= 4.0) N@1  |     |     |       |         |           |         |
-| Cumulative Hit (>= 4.0) N@5  |     |     |       |         |           |         |
-| Cumulative Hit (>= 4.0) N@10 |     |     |       |         |           |         |
+5. **All of the Above**: Uses both Leave-One-Out Validation, and Stratified Train-Test Split metric evaluations.
 
 ## Modes of Operation
 
-The recommendation system can be run in three different modes, each serving a specific purpose:
+1. **Development Mode**: Works with a locally running LLM model (default):
 
-1. **Development Mode**:
+   ```bash
+   python llm_recommendation_system.py --mode development
+   ```
 
-   - **Purpose**: Used for development and testing with a locally running LLM model.
-   - **Setup**: Ensure you have a local LLM model running that exposes an OpenAPI-compatible API on port 5001.
-   - **Command**: Run the system using:
+2. **Production Mode**: Uses OpenAI API:
 
-     ```bash
-     python llm_recommendation_system.py --mode development
-     ```
+   ```bash
+   python llm_recommendation_system.py --mode production
+   ```
 
-2. **Production Mode**:
+   Production mode requires you to create a .env file, and set your own OPENAI_API_KEY. We do not
+   recommend using production mode due to high number of API calls made by the system and instead recommend
+   using development mode for local execution.
 
-   - **Purpose**: Utilizes OpenAI's GPT-4o-mini model for generating descriptions and similarity scores, suitable for production environments.
-   - **Setup**: Requires an OpenAI API key, which should be added to a `.env` file in the project root directory.
-   - **Command**: Run the system using:
-     ```bash python
-     llm_recommendation_system.py --mode production
-     ```
+3. **Generate Data Mode**: Prepopulates movie descriptions and user preferences:
 
-3. **Generate Data Mode**:
-   - **Purpose**: Retrieves movie descriptions and generates user preferences for all movies and users in the dataset. This mode is used to populate the `descriptions.csv` and `preferences.csv` files in the `ml-32m` or the `ml-latest-small` directory (depending on the dataset you're generating for) for faster processing in other modes. You will be asked which dataset to generate for when you start the program.
-   - **Subcommands**:
-     - `--start-movie-id <int>`: Specifies the starting movie ID for data generation. Default is 1.
-     - `--start-user-id <int>`: Specifies the starting user ID for data generation. Default is 1.
-   - **Command**: Run the system using:
-     ```bash
-     python llm_recommendation_system.py --mode generate-data --start-movie-id 1 --start-user-id 1
-     ```
+   ```bash
+   python llm_recommendation_system.py --mode generate-data --start-movie-id 1 --start-user-id 1
+   ```
+
+4. **Time Measurement Mode**: Evaluates recommendation generation speed:
+   ```bash
+   python llm_recommendation_system.py --mode time-measurement --sample-size 100 --sample-method random
+   ```
 
 ## Getting Started
 
-To get started with the LLM-enhanced Movie Recommendation System, follow these steps:
+1. **Clone the repository**
 
-1. Clone the repository:
+2. **Set up Python environment**:
 
-```bash
-git clone https://github.com/Windz-GameDev/Recommendation-Systems-Research cd Recommendation-Systems-Research
-```
+   ```bash
+   conda install -c conda-forge scikit-surprise pandas numpy requests cinemagoer
+   pip install -r requirements.txt
+   ```
 
-2. Set up new Python environment using Conda and activate it. After, install core dependencies with the following command.
+3. **Set up KoboldCPP with Phi-4**:
 
-```bash
-conda install -c conda-forge scikit-surprise pandas numpy requests cinemagoer tabulate
-```
+   - Download KoboldCPP from [GitHub](https://github.com/LostRuins/koboldcpp)
+   - Download Phi-4 model (recommended: phi-4-Q6_K.gguf) from Hugging Face
+   - Run KoboldCPP with the Phi-4 model with OpenAI API compatibility on port 5001
+   - Important: Ensure that 'Use ContextShift' is checked
 
-3.  Set up the local LLM model:
+4. **Prepare the dataset**:
 
-    - Ensure that you have a locally running LLM model that exposes an OpenAPI-compatible API on port 5001.
-    - The LLM model should be accessible at `http://localhost:5001/v1/chat/completions`.
-    - An example application for running local LLMs that meets both of the above criteria is [KoboldCPP](https://github.com/LostRuins/koboldcpp), which allows you to run language models on your local machine.
+   - Create `Datasets/Movie_Lens_Datasets/` directories
+   - Download MovieLens dataset (small or 32M version)
+   - Extract contents to the appropriate folder:
+     - Small: `ml-latest-small/`
+     - 32M: `ml-32m/`
 
-4.  Prepare the dataset:
+5. **Run the system**:
 
-    - The recommendation system supports both the MovieLens 32M size dataset and the MovieLens latest 100k size dataset. Choose the appropriate dataset based on your computational resources and desired dataset size.
-    - The MovieLens datasets are not included in the repository due to their large size. You need to download them manually:
-      - a. Create a `Datasets` folder in the root of your project if it doesn't exist already.
-      - b. Inside the `Datasets` folder, create a `Movie_Lens_Datasets` folder.
-      - c. Download the MovieLens dataset of your choice:
-        - For the 32M dataset: Go to https://grouplens.org/datasets/movielens/32m/ and download "ml-32m.zip"
-        - For the 100k katest dataset: Go to https://grouplens.org/datasets/movielens/latest/ and download "ml-latest-small.zip"
-      - d. Extract the folder from within the zip file, open it, and then drag its contents into the correct dataset folder:
-        - For 32M dataset: `Datasets/Movie_Lens_Datasets/ml-32m/`
-        - For 100k latest dataset: `Datasets/Movie_Lens_Datasets/ml-latest-small/`
-    - Ensure that the dataset files (`ratings.csv`, `movies.csv`, `links.csv`) are present in the extracted folder.
-    - The project uses the [Phi-3-mini-4k-instruct-gguf](https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf) model from Hugging Face for the LLM. This model is designed to provide high-quality language understanding and generation capabilities.
-    - The `descriptions.csv` files are included in the repository and will be automatically downloaded when you clone the project. This file contains cached movie descriptions to speed up the recommendation process.
+   ```bash
+   python llm_recommendation_system.py
+   ```
 
-5.  Create a `.env` file in the project root directory and add your OpenAI API key:
+6. **Interactive Usage**:
+   - Add new users with ratings
+   - Generate personalized recommendations
+   - Calculate evaluation metrics
 
-```plaintext
-OPENAI_API_KEY=your_api_key_here
-```
+## Advanced Features
 
-6.  Run the recommendation system (uses development mode by default):
+- **Context-Optimized Prompts**: Special prompt formatting optimized for Phi-4 and similar models
+- **Hybrid Weighting**: Automatic optimization of weights between traditional and LLM components for some algorithms
+- **User Preference Generation**: LLM-based generation of preference summaries from rated movies
+- **Date Range Preference**: Automatic detection of preferred movie release date ranges
+- **Rating/Popularity Preferences**: Detection of user preferences for highly-rated or popular movies
+- **Performance Measurement**: Detailed timing of algorithmic components
 
-```bash
-python llm_recommendation_system.py
-```
+## Future Directions
 
-7. Follow the prompts to provide your movie preferences and receive personalized recommendations.
-
-## Example Inputs and Outputs
-
-### User 1 [Preferred LLM-enhanced Anonymously]:
-
-**Favorite Movies:**
-
-1. The Lord of the Rings: The Two Towers - 5
-2. Rogue One: A Star Wars Story - 5
-3. WALL·E - 5
-
-**User Preferences:**
-
-"I am drawn to science fiction and fantasy stories that are well written."
-
-**Top 10 recommendations according to SVD:**
-
-Planet Earth II (2016), Planet Earth (2006), Band of Brothers
-(2001), The Civil War (1990), The Blue Planet (2001), Cosmos,
-Cosmos: A Spacetime Odyssey, Blue Planet II (2017), Twelve
-Angry Men (1954), The Shawshank Redemption (1994).
-
-**Top 10 recommendations according to our LLM-enhanced:**
-
-Dune (2021), Inception (2010), Cosmos: A Spacetime Odyssey,
-Attack On Titan (2013), Black Mirror, Firefly (2002), Avengers:
-Infinity War - Part II (2019), Avengers: Infinity War - Part I
-(2018), Over the Garden Wall (2013), Infinity Train (2016).
-
----
-
-### User 2 [Preferred LLM-enhanced Anonymously]:
-
-**Favorite Movies:**
-
-1. Tropic Thunder (2008) - 5
-2. Coming to America (1988) - 4.5
-3. Coming 2 America (2021) - 5
-4. Beetlejuice (1988) - 4
-5. Vegas Vacation (1997) - 4
-6. National Lampoon's Christmas Vacation (1989) - 5
-7. Grown Ups (2010) - 4.5
-8. Grown Ups 2 (2013) - 4.5
-9. Anchorman: The Legend of Ron Burgundy (2004) - 4.5
-10. Anchorman 2: The Legend Continues (2013) - 5
-
-**User Preferences:**
-
-"The types of movies I like are action/adventure, comedy, romcom, suspense and thrillers, and documentaries"
-
-**Top 10 recommendations according to SVD:**
-
-The Shawshank Redemption (1994), The Count of Monte Cristo
-(1998), Alive Inside (2014), Alone in the Wilderness Part II
-(2011), The Adventures of Sherlock Holmes and Doctor Watson:
-The Hunt for the Tiger (1980), Three Men and a Leg (1997),
-Sherlock: The Final Problem (2017), Attack On Titan (2013),
-Connections (1978), Saturday Night Live: The Best of Will
-Ferrell (2002).
-
-**Top 10 recommendations according to our LLM-enhanced:**
-
-The Hangover (2009), Raiders of the Lost Ark (Indiana Jones and
-the Raiders of the Lost Ark) (1981), Saturday Night Live: The
-Best of Will Ferrell (2002), There's Something About Mary
-(1998), Deadpool (2016), Three Men and a Leg (1997), The Mole
-(2020), 3 Idiots (2009), The Adventures of Sherlock Holmes and
-Doctor Watson, Bill Burr: You People Are All the Same (2012).
-
----
-
-### User 3 [Preferred SVD Anonymously]:
-
-**Favorite Movies:**
-
-1. Top Gun Maverick - 4.5
-2. The Final Countdown (1980) - 5
-3. Star Trek Into Darkness - 5
-4. My Cousin Vinny - 5
-
-**User Preferences:**
-
-"I like movies with good visuals. I love airplanes and that factors into my appreciation for movies like 'Top Gun Maverick' or 'The Final Countdown' with realistic flying and film of actual aircraft in flight—not fake or CGI. I like movies with science fiction aspects, I believe there are other worlds and movies like 'Star Trek Into Darkness' spur my imagination into what may exist. I appreciate movies like 'My Cousin Vinny' because I think the cast, humor, and delivery are all outstanding. I appreciate movies with great acting and writing."
-
-**Top 10 recommendations according to SVD:**
-
-The Civil War (1990), Band of Brothers (2001), The Work of
-Director Spike Jonze (2003), Connections (1978), Urusei Yatsura
-Movie 2: Beautiful Dreamer (1984), Letter from Siberia (1957),
-Emilie Muller (1994), The Shawshank Redemption (1994), Baseball
-(1994), Best Boy (1979).
-
-**Top 10 recommendations according to our LLM-enhanced:**
-
-Firefly (2002), Wings of Hope (2000), Cosmos: A Spacetime
-Odyssey, Blue Planet II (2017), Cosmos, Good Will Hunting
-(1997), Future by Design (2006), His Last Vow, Hornblower: The
-Even Chance (1998), The Count of Monte Cristo (1998).
-
----
-
-### User 4 [Prefered SVD Anonymously]:
-
-**Favorite Movies:**
-
-1. Kill Bill (2003) - 5.0
-2. Crossroads (1986) - 5.0
-3. Conan The Barbarian (1982) - 5.0
-4. Training Day (2001) - 5.0
-5. Outsiders (1983) - 5.0
-6. Full Metal Jacket (1987) - 5.0
-
-**User Preferences:**
-
-"I like movies that have great dialogue, and hints of supernatural elements. I love stories of epic tales."
-
-**Top 10 recommendations according to SVD:**
-
-The Godfather (1972), Citizen Kane (1941), 2001: A Space Odyssey (1968),
-The Blue Planet (2001), Planet Earth (2006), Baseball (1994)
-Planet Earth II (2016), The Work of Director Chris Cunningham (2003),
-Cosmos, Near Death (1989)
-
-**Top 10 recommendations according to our LLM-enhanced:**
-
-Death Note: Desu nôto (2006–2007), Urusei Yatsura Movie 2: Beautiful Dreamer (Urusei Yatsura 2: Byûtifuru dorîmâ) (1984),
-Sherlock Holmes and Dr. Watson: Acquaintance (1979), Legend of the Galactic Heroes: Overture to a New War (1993),
-Blade Runner (1982), Akira (1988), Jim Henson's The Storyteller (1989), Infinity Train (2016)
-Apocalypse Now (1979), Legend of the Galactic Heroes: My Conquest Is the Sea of Stars (1988)
-
----
-
-## Contributing
-
-We welcome contributions from the open-source community to make this project even better. If you have any ideas, suggestions, or bug reports, please open an issue or submit a pull request on our GitHub repository.
+1. **Further Prompt Optimization**: Continuing to refine prompting strategies for smaller models
+2. **Memory-Efficient Processing**: Implementing additional optimization techniques to reduce memory footprint and improve program efficiency
+3. **Enhanced User Preference Understanding**: Improving extraction of user preferences
+4. **Further Algorithm Integration**: Expanding support for state-of-the-art recommendation approaches
+5. **Improved Similarity Score Conversion**: Enhancing the accuracy of LLM-generated similarity scores by incorporating more user and movie data in score calculation
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the MIT License.

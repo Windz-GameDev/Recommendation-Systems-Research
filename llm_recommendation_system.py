@@ -1,7 +1,6 @@
 # Import core components from the Surprise library for collaborative filtering,
 # including dataset handling, rating scale processing, and the SVD algorithm.
 from surprise import Dataset, Reader, SVD, KNNBasic, SVDpp, accuracy
-from tabulate import tabulate # For displaying the results matrix
 
 # Import model selection utilities from Surprise for train-test splits and cross-validation.
 from surprise.model_selection import train_test_split, cross_validate
@@ -59,6 +58,1107 @@ from recommenders.datasets.python_splitters import python_stratified_split
 import cornac
 import torch
 from recommenders.models.cornac.cornac_utils import predict_ranking
+
+# Importing neccessary libraries for LightGCN, a state of the art recommendation model.
+from recommenders.models.deeprec.models.graphrec.lightgcn import LightGCN
+from recommenders.models.deeprec.DataModel.ImplicitCF import ImplicitCF
+from recommenders.models.deeprec.deeprec_utils import prepare_hparams
+
+def evaluate_lightgcn_ranking_metrics(
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    top_k_values: List[int],
+    test_size: float = 0.25,
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None,
+    n_layers: int = 3,
+    embedding_size: int = 64,
+    epochs: int = 20,
+    batch_size: int = 1024,
+    learning_rate: float = 0.005,
+    decay: float = 0.0001,
+    seed: int = 42,
+    user_ids: Optional[List[Any]] = None
+) -> Dict[str, float]:
+    """
+    Evaluate LightGCN recommendation algorithm using train-test split and calculate ranking performance metrics.
+    
+    This function evaluates a LightGCN algorithm by:
+    1. Splitting ratings data into training and test sets
+    2. Training the LightGCN model on the training set
+    3. Generating predictions for all movies the user hasn't seen
+    4. Optionally enhancing predictions using LLM
+    5. Calculating ranking performance metrics at different K values
+    
+    Both basic LightGCN and LLM-enhanced recommendation approaches are evaluated
+    using the same test set, enabling direct comparison of their effectiveness.
+    
+    Parameters:
+        ratings_dataframe (pd.DataFrame):
+            DataFrame containing user ratings with columns:
+            - 'userId': User identifier
+            - 'movieId': Movie identifier
+            - 'rating': User's rating (typically 0.5-5.0)
+            
+        id_to_title (Dict[Any, str]):
+            Dictionary mapping movie IDs to their titles.
+            
+        combined_dataframe (pd.DataFrame):
+            DataFrame containing movie metadata with at least:
+            - 'movieId': Movie identifier
+            - Other metadata used for movie descriptions
+            
+        model_name (str):
+            Name of the language model for generating/processing descriptions.
+            
+        chat_format (str):
+            Template string for structuring LLM prompts.
+            
+        descriptions_path (str):
+            File path to cached movie descriptions CSV.
+            
+        api_url (str):
+            API endpoint URL for the language model.
+            
+        headers (Dict[str, str]):
+            HTTP headers for LLM API requests.
+            
+        preferences_path (str):
+            File path to user preferences CSV.
+            
+        scores_path (str):
+            File path to movie scores CSV (IMDb ratings, popularity).
+            
+        top_k_values (List[int]):
+            List of K values for calculating top-K metrics (e.g., [5, 10, 20]).
+            
+        test_size (float, default=0.25):
+            Proportion of data to use for testing (0.0-1.0).
+            
+        use_llm (bool, default=False):
+            Whether to enhance recommendations using LLM.
+            
+        max_retries (int, default=5):
+            Maximum number of retry attempts for API calls.
+            
+        delay_between_attempts (int, default=1):
+            Delay in seconds between retry attempts.
+            
+        num_favorites (int, default=3):
+            Number of favorite movies to use when calculating LLM similarity.
+            
+        search_count (Optional[int], default=None):
+            Number of candidates to consider for LLM refinement.
+            If None, defaults to 100. Larger counts may improve recommendation
+            quality at the cost of increased processing time.
+            
+        n_layers (int, default=3):
+            Number of graph convolution layers in LightGCN.
+            
+        embedding_size (int, default=64):
+            Dimension of embeddings for users and items.
+            
+        epochs (int, default=20):
+            Number of training epochs.
+            
+        batch_size (int, default=1024):
+            Size of mini-batches during training.
+            
+        learning_rate (float, default=0.005):
+            Learning rate for optimizer.
+            
+        decay (float, default=0.0001):
+            Weight decay coefficient (L2 regularization).
+            
+        seed (int, default=42):
+            Random seed for reproducibility.
+            
+        user_ids (Optional[List[Any]], default=None):
+            List of specific user IDs to evaluate. If None, evaluates all users in the test set
+    
+    Returns:
+        Dict[str, float]:
+            Dictionary mapping metric names to their values:
+            
+            Ranking metrics:
+            - "ndcg@k": NDCG metric at k for base algorithm
+            - "map@k": MAP metric at k for base algorithm
+            - "precision@k": Precision at k for base algorithm
+            - "recall@k": Recall at k for base algorithm
+
+            Each ranking metric is a float between 0.0 and 1.0, where higher is better.
+            
+            When use_llm=True, also includes LLM-enhanced versions:
+            - "ndcg@k_LLM": NDCG metric at k for LLM-enhanced
+            - "map@k_LLM": MAP metric at k for LLM-enhanced
+            - "precision@k_LLM": Precision at k for LLM-enhanced
+            - "recall@k_LLM": Recall at k for LLM-enhanced
+            
+    Performance Metrics Description:
+        - NDCG@k: Normalized Discounted Cumulative Gain
+          Measures ranking quality, giving higher weight to relevant items at top positions
+          
+        - MAP@k: Mean Average Precision
+          Measures average precision across multiple queries, considering position
+          
+        - Precision@k: Proportion of recommended items that are relevant
+          Measures recommendation accuracy without considering position
+          
+        - Recall@k: Proportion of relevant items that are recommended
+          Measures recommendation completeness
+    
+    Additional timing metrics:
+        - "time_total": Total execution time in seconds
+        - "time_train": Time to train the model in seconds
+        - "time_base_predictions": Time to generate base predictions in seconds
+        - "time_llm_predictions": Time to generate LLM predictions in seconds (if use_llm=True)
+        - "time_metrics_calculation": Time to calculate all metrics in seconds
+    """
+    # Start timing the entire process
+    total_start_time = time.time()
+
+    print(f"Starting LightGCN ranking metric evaluation with {test_size*100:.0f}% test split...")
+    
+    # Initialize results dictionary
+    results = {}
+    timing_results = {}
+
+    # Apply stratified split based on items as in the benchmark
+    ratio = 1 - test_size
+    train_df, test_df = python_stratified_split(
+        ratings_dataframe,
+        ratio=ratio, 
+        min_rating=1, 
+        filter_by="item", 
+        col_user="userId", 
+        col_item="movieId"
+    )
+
+    print(f"Train set: {len(train_df)} ratings, Test set: {len(test_df)} ratings")
+
+    # Get relevant user IDs in test set
+    if user_ids is not None:
+        # Filter test_df to include only specified user_ids that exist in the test set
+        test_user_ids = [user_id for user_id in user_ids if user_id in test_df['userId'].unique()]
+        if len(test_user_ids) == 0:
+            print("Warning: None of the specified user_ids exist in the test set. Using all test users instead.")
+            test_user_ids = test_df['userId'].unique()
+        else:
+            print(f"Using {len(test_user_ids)} specified users out of {len(test_df['userId'].unique())} total users in the test set.")
+    else:
+        test_user_ids = test_df['userId'].unique()
+    
+    # Start timing the training process
+    train_start_time = time.time()
+
+    print("Training the LightGCN model...")
+
+    # Convert train dataframe to ImplicitCF format for LightGCN with explicit column names
+    data = ImplicitCF(
+        train=train_df, 
+        test=test_df, 
+        seed=seed,
+        col_user='userId',
+        col_item='movieId',  
+        col_rating='rating'  
+    )
+    
+    # Prepare hyperparameters
+    hparams = prepare_hparams(
+        n_layers=n_layers,
+        embed_size=embedding_size,
+        batch_size=batch_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        eval_epoch=-1,
+        top_k=max(top_k_values),
+        decay=decay,
+        model_type="lightgcn",
+        metrics=[],
+        MODEL_DIR=".",
+        save_model=False,
+    )
+    
+    # Initialize and train LightGCN model
+    model = LightGCN(hparams, data, seed=seed)
+    model.fit()
+
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_ranking"] = train_end_time - train_start_time
+    print(f"LightGCN model training completed in {timing_results['time_train_ranking']:.2f} seconds")
+    
+    # Start timing base predictions
+    base_pred_start_time = time.time()
+
+    print("Generating base predictions using LightGCN...")
+    
+    # Get Top-K recommendations using LightGCN
+    base_predictions = model.recommend_k_items(
+        test_df, 
+        top_k=search_count if search_count is not None else 100, 
+        remove_seen=True
+    )
+    
+    # Record base prediction time
+    base_pred_end_time = time.time()
+    timing_results["time_base_predictions_ranking"] = base_pred_end_time - base_pred_start_time
+    print(f"Base predictions completed in {timing_results['time_base_predictions_ranking']:.2f} seconds")
+
+    # scale prediction column for consistency
+    if not base_predictions.empty:
+        # Rename columns to match standard format for evaluation functions
+        base_predictions_for_eval = base_predictions.copy()
+        
+        # Scale LightGCN prediction scores to -1 to 1 range
+        min_score = base_predictions_for_eval['prediction'].min()
+        max_score = base_predictions_for_eval['prediction'].max()
+        
+        print(f"Original LightGCN score range: [{min_score}, {max_score}]")
+
+        # Define scaling function for LightGCN predictions
+        def scale_lightgcn_score(score):
+            # Handle edge case where all scores are identical
+            if max_score == min_score:
+                return 0.0
+            # Apply min-max scaling to map to [-1.0, 1.0]
+            scaled_zero_one = (score - min_score) / (max_score - min_score)
+            return (scaled_zero_one * 2.0) - 1.0
+            
+        base_predictions_for_eval['normalized_prediction'] = base_predictions_for_eval['prediction'].apply(scale_lightgcn_score)
+        
+        print("LightGCN scores scaled to -1.0 to 1.0 range.")
+        print("First 5 rows after scaling:\n", base_predictions_for_eval.head())
+
+    # Filter base predictions to only include test users
+    if user_ids is not None:
+        print(f"Filtering base predictions to only include {len(test_user_ids)} / {len(base_predictions_for_eval['userId'].unique())} test users...")
+        base_predictions_for_eval = base_predictions_for_eval[base_predictions_for_eval['userId'].isin(test_user_ids)]
+        print(f"Base predictions after filtering: {len(base_predictions_for_eval)} rows")
+
+    # Generate LLM predictions if enabled
+    llm_predictions_dataframe = None
+    hybrid_predictions_dataframe = None
+    
+    if use_llm:
+        # Start timing LLM predictions
+        llm_pred_start_time = time.time()
+
+        print("Generating LLM-enhanced predictions...")
+        
+        # Load required dataframes for LLM processing
+        max_user_id_val = ratings_dataframe['userId'].max()
+        preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+        movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+        
+        # Initialize list to store LLM predictions
+        llm_predictions = []
+
+        # Dictionary to store LLM scores by (user_id, movie_id) for later hybrid calculation
+        llm_scores = {}
+        
+        n_processed = 0
+        total_users = len(test_user_ids)
+        
+        for user_id in test_user_ids:
+            n_processed += 1
+            if n_processed % 10 == 0:
+                print(f"Processing user {n_processed}/{total_users}...")
+            
+            # Filter base predictions for this user
+            user_base_preds = base_predictions_for_eval[base_predictions_for_eval['userId'] == user_id]
+            
+            if user_base_preds.empty:
+                continue
+                
+            # Sort by predicted rating (using the normalized score)
+            user_base_preds = user_base_preds.sort_values('normalized_prediction', ascending=False)
+            
+            # Determine number of candidates to consider for LLM processing
+            n_recs = search_count if search_count is not None else 100
+            
+            # Take the top n_recs predictions
+            top_preds = user_base_preds.head(n_recs)
+            
+            # Prepare candidate recommendations in the format expected by get_movie_descriptions
+            candidate_recommendations = []
+            for _, row in top_preds.iterrows():
+                movie_id = row['movieId']
+                movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
+                prediction = row['normalized_prediction']  # Use the normalized prediction
+                candidate_recommendations.append((movie_id, movie_title, prediction))
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            if len(user_prefs) == 0:
+                continue
+                
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get movie descriptions
+            candidate_movie_descriptions = get_movie_descriptions(
+                candidate_recommendations, combined_dataframe, model_name, chat_format,
+                descriptions_path, scores_path, api_url, headers,
+                max_retries, delay_between_attempts, is_normalized=True
+            )
+            
+            # Get user's favorite movies from training set
+            favorite_movies = []
+            train_user = train_df[train_df['userId'] == user_id]
+            if len(train_user) > 0:
+                top_movies = train_user.sort_values('rating', ascending=False).head(num_favorites)
+                for _, row in top_movies.iterrows():
+                    movie_title = id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}")
+                    favorite_movies.append((movie_title, row['rating']))
+            
+            # Get top K similar movies using LLM
+            top_k_llm_recommendations = find_top_n_similar_movies(
+                "LightGCN", 
+                preferences_text, candidate_movie_descriptions, id_to_title, model_name,
+                chat_format, max(top_k_values), api_url, headers, movie_scores_df,
+                prioritize_ratings=prioritize_ratings,
+                prioritize_popular=prioritize_popular,
+                favorite_movies=favorite_movies,
+                num_favorites=num_favorites,
+                date_range=date_range
+            )
+            
+            # Create prediction entries for LLM recommendations
+            for movie_id, similarity in top_k_llm_recommendations:
+                # Store the raw similarity score (-1 to 1) for hybrid calculation
+                llm_scores[(user_id, movie_id)] = similarity
+
+                # Map similarity score (-1 to 1) to rating scale (0.5 to 5.0)
+                normalized_score = 0.5 + ((similarity + 1) / 2) * 4.5
+                
+                llm_predictions.append({
+                    'userId': user_id,
+                    'movieId': movie_id,
+                    'prediction': normalized_score
+                })
+        
+        # Convert LLM predictions to DataFrame
+        if llm_predictions:
+            llm_predictions_dataframe = pd.DataFrame(llm_predictions)
+
+            # Ensure consistent data types between test and prediction dataframes
+            llm_predictions_dataframe['userId'] = llm_predictions_dataframe['userId'].astype(test_df['userId'].dtype)
+            llm_predictions_dataframe['movieId'] = llm_predictions_dataframe['movieId'].astype(test_df['movieId'].dtype)
+
+            # LightGCN + LLM hybrid predictions with optimized weights
+            print("Generating hybrid predictions with optimized weights...")
+            
+            # Define the weight combinations to test
+            weight_combinations = [
+                (0.0, 1.0), (0.1, 0.9), (0.2, 0.8), (0.3, 0.7), (0.4, 0.6),
+                (0.5, 0.5), (0.6, 0.4), (0.7, 0.3), (0.8, 0.2), (0.9, 0.1), (1.0, 0.0)
+            ]
+            
+            # Test each weight combination
+            best_hybrid_metrics = {}
+            best_weights = None
+            best_avg_metric = -1.0
+            best_hybrid_df = None
+            
+            # Filter test_df to only include specified users if user_ids was provided
+            filtered_test_df = test_df
+            if user_ids is not None and len(user_ids) > 0:
+                filtered_test_df = test_df[test_df['userId'].isin(test_user_ids)]
+                print(f"Filtering test set to {len(filtered_test_df)} ratings from {len(test_user_ids)} users for metrics calculation")
+            
+            print("\nTesting different weight combinations...")
+            
+            for lightgcn_weight, llm_weight in weight_combinations:
+                print(f"  Testing LightGCN weight: {lightgcn_weight:.1f}, LLM weight: {llm_weight:.1f}")
+                
+                # Create hybrid predictions for this weight combination
+                hybrid_predictions = []
+                for user_id in test_user_ids:
+                    user_llm_movies = [movie_id for (u_id, movie_id) in llm_scores.keys() if u_id == user_id]
+                    user_base_preds = base_predictions_for_eval[base_predictions_for_eval['userId'] == user_id]
+                    
+                    for movie_id in user_llm_movies:
+                        base_pred_row = user_base_preds[user_base_preds['movieId'] == movie_id]
+                        base_score = base_pred_row['normalized_prediction'].iloc[0] if not base_pred_row.empty else 0.0
+                        llm_score = llm_scores.get((user_id, movie_id), 0.0)
+                        
+                        # Apply the current weight combination
+                        hybrid_score = (lightgcn_weight * base_score) + (llm_weight * llm_score)
+                        
+                        # Map to 0.5-5.0 scale for evaluation
+                        rating_scale_score = 0.5 + ((hybrid_score + 1) / 2) * 4.5
+                        
+                        hybrid_predictions.append({
+                            'userId': user_id,
+                            'movieId': movie_id,
+                            'prediction': rating_scale_score
+                        })
+                
+                # Convert to DataFrame
+                if hybrid_predictions:
+                    hybrid_df = pd.DataFrame(hybrid_predictions)
+                    hybrid_df['userId'] = hybrid_df['userId'].astype(test_df['userId'].dtype)
+                    hybrid_df['movieId'] = hybrid_df['movieId'].astype(test_df['movieId'].dtype)
+                    
+                    # Calculate metrics for this weight combination
+                    weight_metrics = {}
+                    for k in top_k_values:
+                        # NDCG@K
+                        ndcg_hybrid = ndcg_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"ndcg@{k}"] = ndcg_hybrid
+                        
+                        # MAP@K
+                        map_hybrid = map_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"map@{k}"] = map_hybrid
+                        
+                        # Precision@K
+                        precision_hybrid = precision_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"precision@{k}"] = precision_hybrid
+                        
+                        # Recall@K
+                        recall_hybrid = recall_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"recall@{k}"] = recall_hybrid
+                    
+                    # Calculate average of all metrics for this weight combination
+                    avg_metric = sum(weight_metrics.values()) / len(weight_metrics)
+                    
+                    # Print the metrics for this weight combination
+                    k_value = top_k_values[0]  # Use first k value for reporting
+                    print(f"    Avg metric: {avg_metric:.4f}, NDCG@{k_value}: {weight_metrics[f'ndcg@{k_value}']:.4f}, " 
+                          f"MAP@{k_value}: {weight_metrics[f'map@{k_value}']:.4f}")
+                    
+                    # Track best weight combination
+                    if avg_metric > best_avg_metric:
+                        best_avg_metric = avg_metric
+                        best_weights = (lightgcn_weight, llm_weight)
+                        best_hybrid_metrics = weight_metrics
+                        best_hybrid_df = hybrid_df
+            
+            # Use the best weight combination for final results
+            if best_weights:
+                lightgcn_weight, llm_weight = best_weights
+                print(f"\nBest weight combination: LightGCN weight = {lightgcn_weight:.1f}, LLM weight = {llm_weight:.1f}")
+                print(f"Best average metric: {best_avg_metric:.4f}")
+                
+                # Store the best weights in the results
+                results["best_hybrid_lightgcn_weight"] = lightgcn_weight
+                results["best_hybrid_llm_weight"] = llm_weight
+                
+                # Use the best hybrid DataFrame for final metrics
+                hybrid_predictions_dataframe = best_hybrid_df
+                
+                # Add the metrics with _Hybrid suffix
+                for metric, value in best_hybrid_metrics.items():
+                    results[f"{metric}_Hybrid"] = value
+
+        # Record LLM prediction time
+        llm_pred_end_time = time.time()
+        timing_results["time_llm_predictions_ranking"] = llm_pred_end_time - llm_pred_start_time
+        print(f"LLM predictions completed in {timing_results['time_llm_predictions_ranking']:.2f} seconds")
+
+    # Start timing metrics calculation
+    metrics_calc_start_time = time.time()
+
+    print("Calculating metrics...")
+
+    # Filter test_df to only include specified users if user_ids was provided
+    filtered_test_df = test_df
+    if user_ids is not None and len(user_ids) > 0:
+        filtered_test_df = test_df[test_df['userId'].isin(test_user_ids)]
+        print(f"Filtering test set to {len(filtered_test_df)} ratings from {len(test_user_ids)} users for metrics calculation")
+
+    # For evaluation, we need to convert the normalized predictions back to the original scale
+    base_predictions_for_metrics = base_predictions_for_eval.copy()
+    
+    # Convert the normalized scores back to the original scale (0.5-5.0)
+    base_predictions_for_metrics['prediction'] = base_predictions_for_metrics['normalized_prediction'].apply(
+        lambda score: 0.5 + ((score + 1) / 2) * 4.5
+    )
+
+    # Calculate ranking metrics for each K value using all predictions
+    for k in top_k_values:
+        # Base algorithm metrics
+        if not base_predictions_for_metrics.empty:
+            
+            # NDCG@K
+            ndcg = ndcg_at_k(
+                filtered_test_df, base_predictions_for_metrics, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"ndcg@{k}"] = ndcg
+            
+            # MAP@K
+            map_score = map_at_k(
+                filtered_test_df, base_predictions_for_metrics, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"map@{k}"] = map_score
+            
+            # Precision@K
+            precision = precision_at_k(
+                filtered_test_df, base_predictions_for_metrics, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"precision@{k}"] = precision
+            
+            # Recall@K
+            recall = recall_at_k(
+                filtered_test_df, base_predictions_for_metrics, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"recall@{k}"] = recall
+            
+        # LLM metrics 
+        if use_llm and llm_predictions_dataframe is not None and not llm_predictions_dataframe.empty:
+            # NDCG@K for LLM
+            ndcg_llm = ndcg_at_k(
+                filtered_test_df, llm_predictions_dataframe, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"ndcg@{k}_LLM"] = ndcg_llm
+            
+            # MAP@K for LLM
+            map_score_llm = map_at_k(
+                filtered_test_df, llm_predictions_dataframe, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"map@{k}_LLM"] = map_score_llm
+            
+            # Precision@K for LLM
+            precision_llm = precision_at_k(
+                filtered_test_df, llm_predictions_dataframe, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"precision@{k}_LLM"] = precision_llm
+            
+            # Recall@K for LLM
+            recall_llm = recall_at_k(
+                filtered_test_df, llm_predictions_dataframe, 
+                col_user="userId", col_item="movieId", 
+                col_rating="rating", col_prediction="prediction", 
+                k=k
+            )
+            results[f"recall@{k}_LLM"] = recall_llm
+
+    # Record metrics calculation time
+    metrics_calc_end_time = time.time()
+    timing_results["time_metrics_calculation_ranking"] = metrics_calc_end_time - metrics_calc_start_time
+    print(f"Metrics calculation completed in {timing_results['time_metrics_calculation_ranking']:.2f} seconds")
+
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_ranking"] = total_end_time - total_start_time
+
+    # Add timing results to the main results dictionary
+    results.update(timing_results)
+
+    print("LightGCN evaluation complete!")
+    
+    return results
+
+def calculate_lightgcn_hit_rates(
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    n_values: List[int],
+    thresholds: List[float],
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None,
+    n_layers: int = 3,
+    embedding_size: int = 64,
+    epochs: int = 20,
+    batch_size: int = 1024,
+    learning_rate: float = 0.005,
+    decay: float = 0.0001,
+    seed: int = 42,
+    user_ids: Optional[List[Any]] = None
+) -> Dict[str, float]:
+    """
+    Calculate hit rates for LightGCN using leave-one-out methodology.
+    
+    This function evaluates LightGCN by:
+    1. For each user, removing one random rating from their ratings
+    2. Training the LightGCN model on the remaining ratings
+    3. Generating recommendations for all movies the user hasn't seen
+    4. Optionally enhancing predictions using an LLM
+    5. Calculating hit rates at different N values and rating thresholds
+    
+    Parameters:
+        ratings_dataframe (pd.DataFrame):
+            DataFrame containing user ratings with columns:
+            - 'userId': User identifier
+            - 'movieId': Movie identifier
+            - 'rating': User's rating (typically 0.5-5.0)
+            
+        id_to_title (Dict[Any, str]):
+            Dictionary mapping movie IDs to their titles.
+            
+        combined_dataframe (pd.DataFrame):
+            DataFrame containing movie metadata with at least:
+            - 'movieId': Movie identifier
+            - Other metadata used for movie descriptions
+            
+        model_name (str):
+            Name of the language model for generating/processing descriptions.
+            
+        chat_format (str):
+            Template string for structuring LLM prompts.
+            
+        descriptions_path (str):
+            File path to cached movie descriptions CSV.
+            
+        api_url (str):
+            API endpoint URL for the language model.
+            
+        headers (Dict[str, str]):
+            HTTP headers for LLM API requests.
+            
+        preferences_path (str):
+            File path to user preferences CSV.
+            
+        scores_path (str):
+            File path to movie scores CSV (IMDb ratings, popularity).
+            
+        n_values (List[int]):
+            List of N values for calculating hit rates (e.g., [1, 5, 10]).
+            
+        thresholds (List[float]):
+            List of rating thresholds to consider for hit rate calculation.
+            For example, [0.0, 4.0] where 0.0 calculates regular hit rate and
+            4.0 calculates cumulative hit rate for highly rated items (>=4.0).
+            
+        use_llm (bool, default=False):
+            Whether to enhance recommendations using LLM.
+            
+        max_retries (int, default=5):
+            Maximum number of retry attempts for API calls.
+            
+        delay_between_attempts (int, default=1):
+            Delay in seconds between retry attempts.
+            
+        num_favorites (int, default=3):
+            Number of favorite movies to use when calculating LLM similarity.
+            
+        search_count (Optional[int], default=None):
+            Number of candidates to consider for LLM refinement.
+            If None, defaults to 100. Larger counts may improve recommendation
+            quality at the cost of increased processing time.
+            
+        n_layers (int, default=3):
+            Number of graph convolution layers in LightGCN.
+            
+        embedding_size (int, default=64):
+            Dimension of embeddings for users and items.
+            
+        epochs (int, default=20):
+            Number of training epochs.
+            
+        batch_size (int, default=1024):
+            Size of mini-batches during training.
+            
+        learning_rate (float, default=0.005):
+            Learning rate for optimizer.
+            
+        decay (float, default=0.0001):
+            Weight decay coefficient (L2 regularization).
+            
+        seed (int, default=42):
+            Random seed for reproducibility.
+            
+        user_ids (Optional[List[Any]], default=None):
+            List of specific user IDs to evaluate. If None, evaluates all users in the test set.
+    
+    Returns:
+        Dict[str, float]:
+            Dictionary mapping metric names to their values:
+            - "hit_rate_N@{n}": Base hit rate at N
+            - "hit_rate_N@{n}_LLM": LLM-enhanced hit rate at N (if use_llm=True)
+            - "hit_rate_N@{n}_Hybrid": Hybrid hit rate at N (if use_llm=True)
+            - "cumulative_hit_{threshold}_N@{n}": Base cumulative hit rate 
+              for ratings >= threshold at N
+            - "cumulative_hit_{threshold}_N@{n}_LLM": LLM-enhanced cumulative hit rate
+              for ratings >= threshold at N (if use_llm=True)
+            - "cumulative_hit_{threshold}_N@{n}_Hybrid": Hybrid cumulative hit rate
+              for ratings >= threshold at N (if use_llm=True)
+    """
+    # Start timing the entire process
+    total_start_time = time.time()
+    
+    print("Starting LightGCN hit rate calculation using leave-one-out methodology...")
+    
+    # Initialize results and timing dictionaries
+    results = {}
+    timing_results = {}
+    
+    # Create a copy of ratings DataFrame (test samples will be removed from this)
+    ratings_dataframe_testset_removed = ratings_dataframe.copy()
+    
+    # Initialize leave-one-out test set
+    loo_testset = []
+    
+    # Determine test users to evaluate
+    test_user_ids = user_ids if user_ids is not None else ratings_dataframe['userId'].unique()
+    
+    print(f"Using {len(test_user_ids)} users for evaluation")
+    
+    # Create leave-one-out test set - remove one rating for each test user
+    for user_id in test_user_ids:
+        user_ratings = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
+        if len(user_ratings) > 1:
+            test_rating_index = random.randint(0, len(user_ratings) - 1)
+            test_rating = user_ratings.iloc[test_rating_index]
+            loo_testset.append((user_id, test_rating['movieId'], test_rating['rating']))
+            ratings_dataframe_testset_removed = ratings_dataframe_testset_removed.drop(user_ratings.index[test_rating_index])
+    
+    # Start timing model training
+    train_start_time = time.time()
+    
+    print("Training the LightGCN model with leave-one-out test set...")
+    
+    # Create the testset DataFrame for LightGCN's ImplicitCF
+    testset_df = pd.DataFrame(loo_testset, columns=['userId', 'movieId', 'rating'])
+
+    # Create data model for LightGCN with explicit column names
+    data = ImplicitCF(
+        train=ratings_dataframe_testset_removed, 
+        test=testset_df, 
+        seed=seed,
+        col_user='userId',
+        col_item='movieId',  
+        col_rating='rating'  
+    )
+    
+    # Prepare hyperparameters
+    hparams = prepare_hparams(
+        n_layers=n_layers,
+        embed_size=embedding_size,
+        batch_size=batch_size,
+        epochs=epochs,
+        learning_rate=learning_rate,
+        eval_epoch=-1,
+        top_k=max(n_values),
+        decay=decay,
+        model_type="lightgcn",
+        metrics=[],
+        MODEL_DIR=".",
+        save_model=False
+    )
+    
+    # Initialize and train LightGCN model
+    model = LightGCN(hparams, data, seed=seed)
+    model.fit()
+    
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_hit_rates"] = train_end_time - train_start_time
+    print(f"LightGCN model training completed in {timing_results['time_train_hit_rates']:.2f} seconds")
+    
+    # Get largest N value for initial recommendations
+    max_n = max(n_values)
+    
+    # Initialize counters for total cases per threshold
+    threshold_totals = {threshold: 0 for threshold in thresholds}
+    
+    # Start timing the prediction and evaluation process
+    pred_eval_start_time = time.time()
+    
+    print("Generating predictions and evaluating hit rates...")
+    
+    # Load required dataframes for LLM processing if needed
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+    
+    # Initialize hit counters
+    hit_counters = {}
+    for n in n_values:
+        for threshold in thresholds:
+            hit_counters[f"hit_rate_N@{n}_{threshold}"] = 0
+            if use_llm:
+                hit_counters[f"hit_rate_N@{n}_{threshold}_LLM"] = 0
+                hit_counters[f"hit_rate_N@{n}_{threshold}_Hybrid"] = 0
+    
+    # Generate predictions for all test cases
+    # Use recommend_k_items from LightGCN model
+    n_search = search_count if search_count is not None else max_n * 10
+    
+    # Get predictions for all users in one go
+    base_predictions = model.recommend_k_items(ratings_dataframe_testset_removed, top_k=n_search, remove_seen=True)
+    
+    # Store LLM scores for hybrid calculation
+    llm_scores = {}
+    
+    # Process each test case
+    n_processed = 0
+    total_users = len(loo_testset)
+    
+    for user_id, movie_id, rating in loo_testset:
+        n_processed += 1
+        if n_processed % 10 == 0:
+            print(f"Processing user {n_processed}/{total_users}...")
+        
+        # Get base recommendations for this user
+        user_base_preds = base_predictions[base_predictions['userId'] == user_id]
+        
+        if user_base_preds.empty:
+            continue
+        
+        # Sort predictions by score (descending)
+        user_base_preds = user_base_preds.sort_values('prediction', ascending=False)
+        
+        # Get base recommended movies
+        base_recommended_movies = user_base_preds['movieId'].tolist()[:max_n]
+        
+        # Process LLM-enhanced recommendations if enabled
+        llm_recommended_movies = None
+        hybrid_recommended_movies = None
+        
+        if use_llm:
+            # Prepare candidate recommendations for LLM
+            top_preds = user_base_preds.head(n_search)
+            
+            # Normalize the raw LightGCN scores to -1 to 1 range
+            min_score = top_preds['prediction'].min()
+            max_score = top_preds['prediction'].max()
+            
+            # Define the normalization function
+            def normalize_score(score):
+                # Handle case where all scores are the same
+                if max_score == min_score:
+                    return 0.0
+                # Scale to [-1, 1]
+                scaled_zero_one = (score - min_score) / (max_score - min_score)
+                return (scaled_zero_one * 2.0) - 1.0
+            
+            # Prepare candidate recommendations in format expected by get_movie_descriptions
+            candidate_recommendations = []
+            for _, row in top_preds.iterrows():
+                movie_id_pred = row['movieId']
+                movie_title = id_to_title.get(movie_id_pred, f"Unknown Movie {movie_id_pred}")
+                # Normalize the score to [-1,1] range
+                prediction = normalize_score(row['prediction'])
+                candidate_recommendations.append((movie_id_pred, movie_title, prediction))
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            if len(user_prefs) == 0:
+                continue
+            
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get movie descriptions
+            candidate_movie_descriptions = get_movie_descriptions(
+                candidate_recommendations, combined_dataframe, model_name, chat_format,
+                descriptions_path, scores_path, api_url, headers,
+                max_retries, delay_between_attempts, is_normalized=True
+            )
+            
+            # Get user's favorite movies from training set
+            favorite_movies = []
+            user_train = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
+            if len(user_train) > 0:
+                top_movies = user_train.sort_values('rating', ascending=False).head(num_favorites)
+                for _, row in top_movies.iterrows():
+                    movie_title = id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}")
+                    favorite_movies.append((movie_title, row['rating']))
+            
+            # Get LLM recommendations
+            llm_recommendations = find_top_n_similar_movies(
+                "LightGCN",
+                preferences_text, candidate_movie_descriptions, id_to_title, model_name,
+                chat_format, max_n, api_url, headers, movie_scores_df,
+                prioritize_ratings=prioritize_ratings,
+                prioritize_popular=prioritize_popular,
+                favorite_movies=favorite_movies,
+                num_favorites=num_favorites,
+                date_range=date_range
+            )
+            
+            llm_recommended_movies = [rec_id for rec_id, similarity in llm_recommendations]
+            
+            # Store LLM scores for hybrid calculation
+            for rec_id, similarity in llm_recommendations:
+                llm_scores[(user_id, rec_id)] = similarity
+            
+            # Create hybrid recommendations with optimized weights
+            lightgcn_weight, llm_weight = 0.3, 0.7  # Default weights, can be optimized
+            
+            # Calculate hybrid scores and create sorted recommendations
+            hybrid_scores = []
+            for rec_id, _ in llm_recommendations:
+                base_pred_row = user_base_preds[user_base_preds['movieId'] == rec_id]
+                if not base_pred_row.empty:
+                    # Normalize the base score
+                    base_raw_score = base_pred_row['prediction'].iloc[0]
+                    base_score = normalize_score(base_raw_score)
+                else:
+                    base_score = 0.0
+                    
+                llm_score = llm_scores.get((user_id, rec_id), 0.0)
+                
+                # Apply weighting
+                hybrid_score = (lightgcn_weight * base_score) + (llm_weight * llm_score)
+                hybrid_scores.append((rec_id, hybrid_score))
+            
+            # Sort by hybrid score
+            hybrid_scores.sort(key=lambda x: x[1], reverse=True)
+            hybrid_recommended_movies = [rec_id for rec_id, _ in hybrid_scores[:max_n]]
+        
+        # Check hit rates for each N value and threshold
+        for n in n_values:
+            # Get base recommendations up to N
+            base_recs_n = base_recommended_movies[:n]
+            
+            # Get LLM recommendations up to N if available
+            llm_recs_n = llm_recommended_movies[:n] if llm_recommended_movies else None
+            
+            # Get hybrid recommendations up to N if available
+            hybrid_recs_n = hybrid_recommended_movies[:n] if hybrid_recommended_movies else None
+            
+            # Check against each threshold
+            for threshold in thresholds:
+                if rating >= threshold:
+                    # Increment threshold counters
+                    threshold_totals[threshold] += 1
+                    
+                    # Check if test movie is in base recommendations
+                    if movie_id in base_recs_n:
+                        counter_key = f"hit_rate_N@{n}_{threshold}"
+                        hit_counters[counter_key] += 1
+                    
+                    # Check if test movie is in LLM recommendations
+                    if use_llm and llm_recs_n and movie_id in llm_recs_n:
+                        counter_key = f"hit_rate_N@{n}_{threshold}_LLM"
+                        hit_counters[counter_key] += 1
+                    
+                    # Check if test movie is in hybrid recommendations
+                    if use_llm and hybrid_recs_n and movie_id in hybrid_recs_n:
+                        counter_key = f"hit_rate_N@{n}_{threshold}_Hybrid"
+                        hit_counters[counter_key] += 1
+    
+    # Record prediction and evaluation time
+    pred_eval_end_time = time.time()
+    timing_results["time_predictions_evaluation_hit_rates"] = pred_eval_end_time - pred_eval_start_time
+    print(f"Predictions and evaluation completed in {timing_results['time_predictions_evaluation_hit_rates']:.2f} seconds")
+    
+    # Calculate final hit rates and store in results
+    for n in n_values:
+        for threshold in thresholds:
+            counter_key = f"hit_rate_N@{n}_{threshold}"
+            if threshold_totals[threshold] > 0:
+                # Base hit rate
+                hit_rate = hit_counters[counter_key] / threshold_totals[threshold]
+                
+                # Use appropriate metric name format
+                if threshold == 0.0:
+                    metric_key = f"hit_rate_N@{n}"
+                else:
+                    metric_key = f"cumulative_hit_{threshold}_N@{n}"
+                
+                results[metric_key] = hit_rate
+                
+                # LLM-enhanced hit rate
+                if use_llm:
+                    llm_counter_key = counter_key + "_LLM"
+                    llm_hit_rate = hit_counters[llm_counter_key] / threshold_totals[threshold]
+                    
+                    if threshold == 0.0:
+                        llm_metric_key = f"hit_rate_N@{n}_LLM"
+                    else:
+                        llm_metric_key = f"cumulative_hit_{threshold}_N@{n}_LLM"
+                    
+                    results[llm_metric_key] = llm_hit_rate
+                    
+                    # Hybrid hit rate
+                    hybrid_counter_key = counter_key + "_Hybrid"
+                    hybrid_hit_rate = hit_counters[hybrid_counter_key] / threshold_totals[threshold]
+                    
+                    if threshold == 0.0:
+                        hybrid_metric_key = f"hit_rate_N@{n}_Hybrid"
+                    else:
+                        hybrid_metric_key = f"cumulative_hit_{threshold}_N@{n}_Hybrid"
+                    
+                    results[hybrid_metric_key] = hybrid_hit_rate
+    
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_hit_rates"] = total_end_time - total_start_time
+    
+    # Add timing results to the main results dictionary
+    results.update(timing_results)
+    
+    print("LightGCN hit rate calculation complete!")
+    return results
+
+def scale_bivae_score(score: float, min_s: float, max_s: float) -> float:
+    """Scales a raw BiVAE score to the -1.0 to 1.0 similarity range using min-max normalization."""
+    # Handle edge case where all scores are identical to avoid division by zero
+    if max_s == min_s:
+        return 0.0  # Return neutral similarity score
+    # Apply min-max scaling formula to map to [0, 1] then scale to [-1.0, 1.0]
+    scaled_zero_one = (score - min_s) / (max_s - min_s)
+    return (scaled_zero_one * 2.0) - 1.0
 
 def normalize_popularity_score(votes: int | float | None, max_rank: int = 1_000_000) -> int | None:
     """
@@ -388,12 +1488,11 @@ def evaluate_ranking_metrics_with_train_test_split(
             top_preds = user_base_preds.head(search_size)
             
             # Prepare candidate recommendations in the format expected by get_movie_descriptions
-            candidate_recommendations = []
-            for _, row in top_preds.iterrows():
-                movie_id = row['movieId']
-                prediction = row['prediction']
-                movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
-                candidate_recommendations.append((movie_id, movie_title, prediction))
+            # We already have the predictions in top_preds
+            candidate_recommendations = [
+                (row['movieId'], id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}"), row['prediction'])
+                for _, row in top_preds.iterrows()
+            ]
             
             # Get user preferences
             user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
@@ -422,6 +1521,7 @@ def evaluate_ranking_metrics_with_train_test_split(
             
             # Get top K similar movies using LLM
             top_k_llm_recommendations = find_top_n_similar_movies(
+                algo.__class__.__name__, # Pass algorithm name
                 preferences_text, candidate_movie_descriptions, id_to_title, model_name,
                 chat_format, max(top_k_values), api_url, headers, movie_scores_df,
                 prioritize_ratings=prioritize_ratings,
@@ -756,15 +1856,24 @@ def evaluate_rating_metrics_with_train_test_split(
             # If there are test movies, get their descriptions
             if len(user_test_movies) > 0:
 
-                # Prepare movies for description retrieval
+                # Prepare movies for description retrieval, including the base prediction
                 candidate_recommendations = []
                 for movie_id, rating in user_test_movies:
                     movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
-
-                    # Using 0 as a placeholder for the prediction since we don't need it here
-                    candidate_recommendations.append((movie_id, movie_title, 0))
+                    
+                    # Find the base prediction for this specific user-movie pair in the test set
+                    base_pred_row = base_predictions_dataframe[
+                        (base_predictions_dataframe['userId'] == user_id) & 
+                        (base_predictions_dataframe['movieId'] == movie_id)
+                    ]
+                    
+                    # Use the actual prediction if found, otherwise default (e.g., to 2.5 or handle as needed)
+                    # A default of 2.5 corresponds to a normalized score of 0.0
+                    prediction = base_pred_row['prediction'].iloc[0] if not base_pred_row.empty else 2.5 
+                    
+                    candidate_recommendations.append((movie_id, movie_title, prediction))
                 
-                # Get descriptions for test movies
+                # Get descriptions and normalized scores for test movies
                 candidate_movie_descriptions = get_movie_descriptions(
                     candidate_recommendations, combined_dataframe, model_name, chat_format,
                     descriptions_path, scores_path, api_url, headers,
@@ -782,6 +1891,7 @@ def evaluate_rating_metrics_with_train_test_split(
                 
                 # Find similarity scores using LLM for each test movie
                 top_movies_similarities = find_top_n_similar_movies(
+                    algo.__class__.__name__, # Pass algorithm name
                     preferences_text, candidate_movie_descriptions, id_to_title, model_name,
                     chat_format, len(candidate_movie_descriptions), api_url, headers, movie_scores_df,
                     prioritize_ratings=prioritize_ratings,
@@ -903,6 +2013,363 @@ def evaluate_rating_metrics_with_train_test_split(
 
     print("Rating metrics evaluation complete!")
     
+    return results
+
+def calculate_bivae_hit_rates(
+    ratings_dataframe: pd.DataFrame,
+    id_to_title: Dict[Any, str],
+    combined_dataframe: pd.DataFrame,
+    model_name: str,
+    chat_format: str,
+    descriptions_path: str,
+    api_url: str,
+    headers: Dict[str, str],
+    preferences_path: str,
+    scores_path: str,
+    n_values: List[int],
+    thresholds: List[float],
+    use_llm: bool = False,
+    max_retries: int = 5,
+    delay_between_attempts: int = 1,
+    num_favorites: int = 3,
+    search_count: Optional[int] = None,
+    latent_dim: int = 100,            
+    encoder_dims: List[int] = [200],  
+    act_func: str = "tanh",           
+    likelihood: str = "pois",         
+    num_epochs: int = 500,            
+    batch_size: int = 1024,           
+    learning_rate: float = 0.001,     
+    seed: int = 42,                   
+    use_gpu: bool = True,             
+    verbose: bool = False,
+    user_ids: Optional[List[Any]] = None
+) -> Dict[str, float]:
+    """
+    Calculate hit rates for BiVAE using leave-one-out methodology.
+    
+    This function evaluates BiVAE by:
+    1. For each user, removing one random rating from their ratings
+    2. Training the BiVAE model on the remaining ratings
+    3. Generating recommendations for all movies the user hasn't seen
+    4. Optionally enhancing predictions using an LLM
+    5. Calculating hit rates at different N values and rating thresholds
+    
+    Parameters are similar to evaluate_bivae_ranking_metrics with these additions:
+        n_values (List[int]):
+            List of N values for calculating hit rates (e.g., [1, 5, 10]).
+            
+        thresholds (List[float]):
+            List of rating thresholds to consider for hit rate calculation.
+            For example, [0.0, 4.0] where 0.0 calculates regular hit rate and
+            4.0 calculates cumulative hit rate for highly rated items (>=4.0).
+    
+    Returns:
+        Dict[str, float]:
+            Dictionary mapping metric names to their values:
+            - "hit_rate_N@{n}": Base hit rate at N
+            - "hit_rate_N@{n}_LLM": LLM-enhanced hit rate at N (if use_llm=True)
+            - "hit_rate_N@{n}_Hybrid": Hybrid hit rate at N (if use_llm=True)
+            - "cumulative_hit_{threshold}_N@{n}": Base cumulative hit rate 
+              for ratings >= threshold at N
+            - "cumulative_hit_{threshold}_N@{n}_LLM": LLM-enhanced cumulative hit rate
+              for ratings >= threshold at N (if use_llm=True)
+            - "cumulative_hit_{threshold}_N@{n}_Hybrid": Hybrid cumulative hit rate
+              for ratings >= threshold at N (if use_llm=True)
+    """
+    # Start timing the entire process
+    total_start_time = time.time()
+    
+    print("Starting BiVAE hit rate calculation using leave-one-out methodology...")
+    
+    # Initialize results and timing dictionaries
+    results = {}
+    timing_results = {}
+    
+    # Create a copy of ratings DataFrame (test samples will be removed from this)
+    ratings_dataframe_testset_removed = ratings_dataframe.copy()
+    
+    # Initialize leave-one-out test set
+    loo_testset = []
+    
+    # Determine test users to evaluate
+    test_user_ids = user_ids if user_ids is not None else ratings_dataframe['userId'].unique()
+    
+    print(f"Using {len(test_user_ids)} users for evaluation")
+    
+    # Create leave-one-out test set - remove one rating for each test user
+    for user_id in test_user_ids:
+        user_ratings = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
+        if len(user_ratings) > 1:
+            test_rating_index = random.randint(0, len(user_ratings) - 1)
+            test_rating = user_ratings.iloc[test_rating_index]
+            loo_testset.append((user_id, test_rating['movieId'], test_rating['rating']))
+            ratings_dataframe_testset_removed = ratings_dataframe_testset_removed.drop(user_ratings.index[test_rating_index])
+    
+    # Start timing model training
+    train_start_time = time.time()
+    
+    print("Training the BiVAE model with leave-one-out test set...")
+    
+    # Convert train dataframe to Cornac format
+    train_data = cornac.data.Dataset.from_uir(
+        ratings_dataframe_testset_removed[['userId', 'movieId', 'rating']].itertuples(index=False),
+        seed=seed
+    )
+    
+    # Initialize and train BiVAE model
+    bivae = cornac.models.BiVAECF(
+        k=latent_dim,
+        encoder_structure=encoder_dims,
+        act_fn=act_func,
+        likelihood=likelihood,
+        n_epochs=num_epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        seed=seed,
+        use_gpu=use_gpu and torch.cuda.is_available(),
+        verbose=verbose
+    )
+    
+    # Train the BiVAE model
+    bivae.fit(train_data)
+    
+    # Record training time
+    train_end_time = time.time()
+    timing_results["time_train_hit_rates"] = train_end_time - train_start_time
+    print(f"BiVAE model training completed in {timing_results['time_train_hit_rates']:.2f} seconds")
+    
+    # Start timing the prediction and evaluation process
+    pred_eval_start_time = time.time()
+    
+    print("Generating predictions and evaluating hit rates...")
+    
+    # Get largest N value for initial recommendations
+    max_n = max(n_values)
+    
+    # Initialize counters for total cases per threshold
+    threshold_totals = {threshold: 0 for threshold in thresholds}
+    
+    # Generate all predictions using BiVAE
+    base_predictions = predict_ranking(
+        bivae,
+        ratings_dataframe_testset_removed,
+        usercol='userId',
+        itemcol='movieId',
+        remove_seen=True
+    )
+    
+    # Scale the predictions to -1 to 1 range
+    if not base_predictions.empty:
+        min_score = base_predictions['prediction'].min()
+        max_score = base_predictions['prediction'].max()
+        base_predictions['prediction'] = base_predictions['prediction'].apply(
+            lambda score: scale_bivae_score(score, min_score, max_score)
+        )
+    
+    # Rename columns to match standard format
+    base_predictions = base_predictions.rename(columns={'userId': 'userId', 'itemID': 'movieId'})
+    
+    # Load required dataframes for LLM processing if needed
+    max_user_id_val = ratings_dataframe['userId'].max()
+    preferences_df = load_user_preferences(preferences_path, max_user_id_val)
+    movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
+    
+    # Initialize hit counters
+    hit_counters = {}
+    for n in n_values:
+        for threshold in thresholds:
+            hit_counters[f"hit_rate_N@{n}_{threshold}"] = 0
+            if use_llm:
+                hit_counters[f"hit_rate_N@{n}_{threshold}_LLM"] = 0
+                hit_counters[f"hit_rate_N@{n}_{threshold}_Hybrid"] = 0
+    
+    # Process each test case
+    n_processed = 0
+    total_users = len(loo_testset)
+    
+    # Store LLM scores for hybrid calculation
+    llm_scores = {}
+    
+    for user_id, movie_id, rating in loo_testset:
+        n_processed += 1
+        if n_processed % 10 == 0:
+            print(f"Processing user {n_processed}/{total_users}...")
+        
+        # Get base recommendations for this user
+        user_base_preds = base_predictions[base_predictions['userId'] == user_id]
+        
+        if user_base_preds.empty:
+            continue
+        
+        # Sort predictions by score (descending)
+        user_base_preds = user_base_preds.sort_values('prediction', ascending=False)
+        
+        # Process LLM-enhanced recommendations if enabled
+        llm_recommended_movies = None
+        hybrid_recommended_movies = None
+        
+        if use_llm:
+            # Determine number of candidates to consider
+            n_recs = search_count if search_count is not None else max_n * 10
+            
+            # Get top n_recs predictions for LLM processing
+            top_preds = user_base_preds.head(n_recs)
+            
+            # Prepare candidate recommendations for LLM
+            candidate_recommendations = []
+            for _, row in top_preds.iterrows():
+                movie_id_pred = row['movieId']
+                movie_title = id_to_title.get(movie_id_pred, f"Unknown Movie {movie_id_pred}")
+                prediction = row['prediction']
+                candidate_recommendations.append((movie_id_pred, movie_title, prediction))
+            
+            # Get user preferences
+            user_prefs = preferences_df.loc[preferences_df['userId'] == user_id]
+            if len(user_prefs) == 0:
+                continue
+            
+            prioritize_ratings = user_prefs['prioritize_ratings'].iloc[0]
+            prioritize_popular = user_prefs['prioritize_popular'].iloc[0]
+            preferences_text = user_prefs['preferences'].iloc[0]
+            date_range = user_prefs['date_range'].iloc[0]
+            
+            # Get movie descriptions
+            candidate_movie_descriptions = get_movie_descriptions(
+                candidate_recommendations, combined_dataframe, model_name, chat_format,
+                descriptions_path, scores_path, api_url, headers,
+                max_retries, delay_between_attempts, is_normalized=True
+            )
+            
+            # Get user's favorite movies from training set
+            favorite_movies = []
+            user_train = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
+            if len(user_train) > 0:
+                top_movies = user_train.sort_values('rating', ascending=False).head(num_favorites)
+                for _, row in top_movies.iterrows():
+                    movie_title = id_to_title.get(row['movieId'], f"Unknown Movie {row['movieId']}")
+                    favorite_movies.append((movie_title, row['rating']))
+            
+            # Get LLM recommendations
+            llm_recommendations = find_top_n_similar_movies(
+                "BiVAE",  # Pass algorithm name
+                preferences_text, candidate_movie_descriptions, id_to_title, model_name,
+                chat_format, max_n, api_url, headers, movie_scores_df,
+                prioritize_ratings=prioritize_ratings,
+                prioritize_popular=prioritize_popular,
+                favorite_movies=favorite_movies,
+                num_favorites=num_favorites,
+                date_range=date_range
+            )
+            
+            llm_recommended_movies = [rec_id for rec_id, similarity in llm_recommendations]
+            
+            # Store LLM scores for hybrid calculation
+            for rec_id, similarity in llm_recommendations:
+                llm_scores[(user_id, rec_id)] = similarity
+            
+            # Create hybrid recommendations with optimized weights
+            bivae_weight, llm_weight = 0.3, 0.7
+            
+            # Calculate hybrid scores and create sorted recommendations
+            hybrid_scores = []
+            for rec_id, _ in llm_recommendations:
+                base_pred_row = user_base_preds[user_base_preds['movieId'] == rec_id]
+                base_score = base_pred_row['prediction'].iloc[0] if not base_pred_row.empty else 0.0
+                llm_score = llm_scores.get((user_id, rec_id), 0.0)
+                
+                # Apply weighting
+                hybrid_score = (bivae_weight * base_score) + (llm_weight * llm_score)
+                hybrid_scores.append((rec_id, hybrid_score))
+            
+            # Sort by hybrid score
+            hybrid_scores.sort(key=lambda x: x[1], reverse=True)
+            hybrid_recommended_movies = [rec_id for rec_id, _ in hybrid_scores[:max_n]]
+        
+        # Check hit rates for each N value and threshold
+        for n in n_values:
+            # Get base recommendations up to N
+            base_recs_n = user_base_preds.head(n)['movieId'].tolist()
+            
+            # Get LLM recommendations up to N if available
+            llm_recs_n = llm_recommended_movies[:n] if llm_recommended_movies else None
+            
+            # Get hybrid recommendations up to N if available
+            hybrid_recs_n = hybrid_recommended_movies[:n] if hybrid_recommended_movies else None
+            
+            # Check against each threshold
+            for threshold in thresholds:
+                if rating >= threshold:
+                    # Increment threshold counters
+                    threshold_totals[threshold] += 1
+                    
+                    # Check if test movie is in base recommendations
+                    if movie_id in base_recs_n:
+                        counter_key = "hit_rate_N@{}_{}".format(n, threshold)
+                        hit_counters[counter_key] += 1
+                    
+                    # Check if test movie is in LLM recommendations
+                    if use_llm and llm_recs_n and movie_id in llm_recs_n:
+                        counter_key = "hit_rate_N@{}_{}".format(n, threshold) + "_LLM"
+                        hit_counters[counter_key] += 1
+                    
+                    # Check if test movie is in hybrid recommendations
+                    if use_llm and hybrid_recs_n and movie_id in hybrid_recs_n:
+                        counter_key = "hit_rate_N@{}_{}".format(n, threshold) + "_Hybrid"
+                        hit_counters[counter_key] += 1
+    
+    # Record prediction and evaluation time
+    pred_eval_end_time = time.time()
+    timing_results["time_predictions_evaluation_hit_rates"] = pred_eval_end_time - pred_eval_start_time
+    print(f"Predictions and evaluation completed in {timing_results['time_predictions_evaluation_hit_rates']:.2f} seconds")
+    
+    # Calculate final hit rates and store in results
+    for n in n_values:
+        for threshold in thresholds:
+            counter_key = f"hit_rate_N@{n}_{threshold}"
+            if threshold_totals[threshold] > 0:
+                # Base hit rate
+                hit_rate = hit_counters[counter_key] / threshold_totals[threshold]
+                
+                # Use appropriate metric name format
+                if threshold == 0.0:
+                    metric_key = f"hit_rate_N@{n}"
+                else:
+                    metric_key = f"cumulative_hit_{threshold}_N@{n}"
+                
+                results[metric_key] = hit_rate
+                
+                # LLM-enhanced hit rate
+                if use_llm:
+                    llm_counter_key = counter_key + "_LLM"
+                    llm_hit_rate = hit_counters[llm_counter_key] / threshold_totals[threshold]
+                    
+                    if threshold == 0.0:
+                        llm_metric_key = f"hit_rate_N@{n}_LLM"
+                    else:
+                        llm_metric_key = f"cumulative_hit_{threshold}_N@{n}_LLM"
+                    
+                    results[llm_metric_key] = llm_hit_rate
+                    
+                    # Hybrid hit rate
+                    hybrid_counter_key = counter_key + "_Hybrid"
+                    hybrid_hit_rate = hit_counters[hybrid_counter_key] / threshold_totals[threshold]
+                    
+                    if threshold == 0.0:
+                        hybrid_metric_key = f"hit_rate_N@{n}_Hybrid"
+                    else:
+                        hybrid_metric_key = f"cumulative_hit_{threshold}_N@{n}_Hybrid"
+                    
+                    results[hybrid_metric_key] = hybrid_hit_rate
+    
+    # Record total execution time
+    total_end_time = time.time()
+    timing_results["time_total_hit_rates"] = total_end_time - total_start_time
+    
+    # Add timing results to the main results dictionary
+    results.update(timing_results)
+    
+    print("BiVAE hit rate calculation complete!")
     return results
 
 def evaluate_bivae_ranking_metrics(
@@ -1099,6 +2566,18 @@ def evaluate_bivae_ranking_metrics(
     )
 
     print(f"Train set: {len(train_df)} ratings, Test set: {len(test_df)} ratings")
+
+    # Get relevant user IDs in test set
+    if user_ids is not None:
+        # Filter test_df to include only specified user_ids that exist in the test set
+        test_user_ids = [user_id for user_id in user_ids if user_id in test_df['userId'].unique()]
+        if len(test_user_ids) == 0:
+            print("Warning: None of the specified user_ids exist in the test set. Using all test users instead.")
+            test_user_ids = test_df['userId'].unique()
+        else:
+            print(f"Using {len(test_user_ids)} specified users out of {len(test_df['userId'].unique())} total users in the test set.")
+    else:
+        test_user_ids = test_df['userId'].unique()
     
     # Start timing the training process
     train_start_time = time.time()
@@ -1152,35 +2631,45 @@ def evaluate_bivae_ranking_metrics(
     timing_results["time_base_predictions_ranking"] = base_pred_end_time - base_pred_start_time
     print(f"Base predictions completed in {timing_results['time_base_predictions_ranking']:.2f} seconds")
 
+    if not base_predictions.empty:
+        min_score = base_predictions['prediction'].min()
+        max_score = base_predictions['prediction'].max()
+        print(f"BiVAE raw score range: [{min_score}, {max_score}]") # Debug print
+        # Apply scaling function to the prediction column
+        base_predictions['prediction'] = base_predictions['prediction'].apply(
+            lambda score: scale_bivae_score(score, min_score, max_score)
+        )
+        print("BiVAE scores scaled to -1.0 to 1.0 range.")
+        print("First 5 rows after scaling:\n", base_predictions.head()) # Debug print
+
     # Rename columns to match standard format for evaluation functions
     base_predictions_for_eval = base_predictions.rename(columns={'userId': 'userId', 'itemID': 'movieId'})
 
+    # Filter base predictions to only include test users
+    if user_ids is not None:
+        print(f"Filtering base predictions to only include {len(test_user_ids)} / {len(base_predictions_for_eval['userId'].unique())} test users...")
+        base_predictions_for_eval = base_predictions_for_eval[base_predictions_for_eval['userId'].isin(test_user_ids)]
+        print(f"Base predictions after filtering: {len(base_predictions_for_eval)} rows")
+
     # Generate LLM predictions if enabled
     llm_predictions_dataframe = None
+    hybrid_predictions_dataframe = None
     if use_llm:
         # Start timing LLM predictions
         llm_pred_start_time = time.time()
 
         print("Generating LLM-enhanced predictions...")
-
-        # Get relevant user IDs in test set
-        if user_ids is not None:
-            # Filter test_df to include only specified user_ids that exist in the test set
-            test_user_ids = [user_id for user_id in user_ids if user_id in test_df['userId'].unique()]
-            if len(test_user_ids) == 0:
-                print("Warning: None of the specified user_ids exist in the test set. Using all test users instead.")
-                test_user_ids = test_df['userId'].unique()
-            else:
-                print(f"Using {len(test_user_ids)} specified users out of {len(user_ids)} from the test set.")
-        else:
-            test_user_ids = test_df['userId'].unique()
         
         # Load required dataframes for LLM processing
         max_user_id_val = ratings_dataframe['userId'].max()
         preferences_df = load_user_preferences(preferences_path, max_user_id_val)
         movie_scores_df = load_movie_scores(scores_path, combined_dataframe['movieId'].max())
         
+        # Initialize list to store LLM predictions
         llm_predictions = []
+
+        # Dictionary to store LLM scores by (user_id, movie_id) for later hybrid calculation
+        llm_scores = {}
         
         n_processed = 0
         total_users = len(test_user_ids)
@@ -1190,13 +2679,13 @@ def evaluate_bivae_ranking_metrics(
             if n_processed % 10 == 0:
                 print(f"Processing user {n_processed}/{total_users}...")
             
-            # Filter base predictions for this user
+            # Filter base predictions for this user (use the scaled ones)
             user_base_preds = base_predictions_for_eval[base_predictions_for_eval['userId'] == user_id]
             
             if user_base_preds.empty:
                 continue
                 
-            # Sort by predicted rating
+            # Sort by predicted rating (now scaled)
             user_base_preds = user_base_preds.sort_values('prediction', ascending=False)
             
             # Determine number of candidates to consider for LLM processing
@@ -1209,8 +2698,8 @@ def evaluate_bivae_ranking_metrics(
             candidate_recommendations = []
             for _, row in top_preds.iterrows():
                 movie_id = row['movieId']
-                prediction = row['prediction']
                 movie_title = id_to_title.get(movie_id, f"Unknown Movie {movie_id}")
+                prediction = row['prediction'] # Use the scaled prediction
                 candidate_recommendations.append((movie_id, movie_title, prediction))
             
             # Get user preferences
@@ -1223,11 +2712,11 @@ def evaluate_bivae_ranking_metrics(
             preferences_text = user_prefs['preferences'].iloc[0]
             date_range = user_prefs['date_range'].iloc[0]
             
-            # Get movie descriptions
+            # Get movie descriptions (this function now expects 0.5-5.0 scores and normalizes them internally)
             candidate_movie_descriptions = get_movie_descriptions(
                 candidate_recommendations, combined_dataframe, model_name, chat_format,
                 descriptions_path, scores_path, api_url, headers,
-                max_retries, delay_between_attempts
+                max_retries, delay_between_attempts, is_normalized=True
             )
             
             # Get user's favorite movies from training set
@@ -1241,6 +2730,7 @@ def evaluate_bivae_ranking_metrics(
             
             # Get top K similar movies using LLM
             top_k_llm_recommendations = find_top_n_similar_movies(
+                "BiVAE", # Pass algorithm name
                 preferences_text, candidate_movie_descriptions, id_to_title, model_name,
                 chat_format, max(top_k_values), api_url, headers, movie_scores_df,
                 prioritize_ratings=prioritize_ratings,
@@ -1252,6 +2742,10 @@ def evaluate_bivae_ranking_metrics(
             
             # Create prediction entries for LLM recommendations
             for movie_id, similarity in top_k_llm_recommendations:
+
+                # Store the raw similarity score (-1 to 1) for hybrid calculation
+                llm_scores[(user_id, movie_id)] = similarity
+
                 # Map similarity score (-1 to 1) to rating scale (0.5 to 5.0)
                 normalized_score = 0.5 + ((similarity + 1) / 2) * 4.5
                 
@@ -1269,23 +2763,164 @@ def evaluate_bivae_ranking_metrics(
             llm_predictions_dataframe['userId'] = llm_predictions_dataframe['userId'].astype(test_df['userId'].dtype)
             llm_predictions_dataframe['movieId'] = llm_predictions_dataframe['movieId'].astype(test_df['movieId'].dtype)
 
-        # Record LLM prediction time
-        llm_pred_end_time = time.time()
-        timing_results["time_llm_predictions_ranking"] = llm_pred_end_time - llm_pred_start_time
-        print(f"LLM predictions completed in {timing_results['time_llm_predictions_ranking']:.2f} seconds")
+            # BiVAE + LLM hybrid predictions
+            print("Generating hybrid predictions with optimized weights...")
+            
+            # Define the weight combinations to test
+            weight_combinations = [
+                (0.0, 1.0), (0.1, 0.9), (0.2, 0.8), (0.3, 0.7), (0.4, 0.6),
+                (0.5, 0.5), (0.6, 0.4), (0.7, 0.3), (0.8, 0.2), (0.9, 0.1), (1.0, 0.0)
+            ]
+            
+            # Test each weight combination
+            best_hybrid_metrics = {}
+            best_weights = None
+            best_avg_metric = -1.0
+            best_hybrid_df = None
+            
+            # Filter test_df to only include specified users if user_ids was provided
+            filtered_test_df = test_df
+            if user_ids is not None and len(user_ids) > 0:
+                filtered_test_df = test_df[test_df['userId'].isin(test_user_ids)]
+                print(f"Filtering test set to {len(filtered_test_df)} ratings from {len(test_user_ids)} users for metrics calculation")
+            
+            print("\nTesting different weight combinations...")
+            
+            for bivae_weight, llm_weight in weight_combinations:
+                print(f"  Testing BiVAE weight: {bivae_weight:.1f}, LLM weight: {llm_weight:.1f}")
+                
+                # Create hybrid predictions for this weight combination
+                hybrid_predictions = []
+                for user_id in test_user_ids:
+                    user_llm_movies = [movie_id for (u_id, movie_id) in llm_scores.keys() if u_id == user_id]
+                    user_base_preds = base_predictions_for_eval[base_predictions_for_eval['userId'] == user_id]
+                    
+                    for movie_id in user_llm_movies:
+                        base_pred_row = user_base_preds[user_base_preds['movieId'] == movie_id]
+                        base_score = base_pred_row['prediction'].iloc[0] if not base_pred_row.empty else 0.0
+                        llm_score = llm_scores.get((user_id, movie_id), 0.0)
+                        
+                        # Apply the current weight combination
+                        hybrid_score = (bivae_weight * base_score) + (llm_weight * llm_score)
+                        
+                        # Map to 0.5-5.0 scale for evaluation
+                        rating_scale_score = 0.5 + ((hybrid_score + 1) / 2) * 4.5
+                        
+                        hybrid_predictions.append({
+                            'userId': user_id,
+                            'movieId': movie_id,
+                            'prediction': rating_scale_score
+                        })
+                
+                # Convert to DataFrame
+                if hybrid_predictions:
+                    hybrid_df = pd.DataFrame(hybrid_predictions)
+                    hybrid_df['userId'] = hybrid_df['userId'].astype(test_df['userId'].dtype)
+                    hybrid_df['movieId'] = hybrid_df['movieId'].astype(test_df['movieId'].dtype)
+                    
+                    # Calculate metrics for this weight combination
+                    weight_metrics = {}
+                    for k in top_k_values:
+                        # NDCG@K
+                        ndcg_hybrid = ndcg_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"ndcg@{k}"] = ndcg_hybrid
+                        
+                        # MAP@K
+                        map_hybrid = map_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"map@{k}"] = map_hybrid
+                        
+                        # Precision@K
+                        precision_hybrid = precision_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"precision@{k}"] = precision_hybrid
+                        
+                        # Recall@K
+                        recall_hybrid = recall_at_k(
+                            filtered_test_df, hybrid_df, 
+                            col_user="userId", col_item="movieId", 
+                            col_rating="rating", col_prediction="prediction", 
+                            k=k
+                        )
+                        weight_metrics[f"recall@{k}"] = recall_hybrid
+                    
+                    # Calculate average of all metrics for this weight combination
+                    avg_metric = sum(weight_metrics.values()) / len(weight_metrics)
+                    
+                    # Print the metrics for this weight combination
+                    k_value = top_k_values[0]  # Use first k value for reporting
+                    print(f"    Avg metric: {avg_metric:.4f}, NDCG@{k_value}: {weight_metrics[f'ndcg@{k_value}']:.4f}, " 
+                          f"MAP@{k_value}: {weight_metrics[f'map@{k_value}']:.4f}")
+                    
+                    # Track best weight combination
+                    if avg_metric > best_avg_metric:
+                        best_avg_metric = avg_metric
+                        best_weights = (bivae_weight, llm_weight)
+                        best_hybrid_metrics = weight_metrics
+                        best_hybrid_df = hybrid_df
+            
+            # Use the best weight combination for final results
+            if best_weights:
+                bivae_weight, llm_weight = best_weights
+                print(f"\nBest weight combination: BiVAE weight = {bivae_weight:.1f}, LLM weight = {llm_weight:.1f}")
+                print(f"Best average metric: {best_avg_metric:.4f}")
+                
+                # Store the best weights in the results
+                results["best_hybrid_bivae_weight"] = bivae_weight
+                results["best_hybrid_llm_weight"] = llm_weight
+                
+                # Use the best hybrid DataFrame for final metrics
+                hybrid_predictions_dataframe = best_hybrid_df
+                
+                # Add the metrics with _Hybrid suffix
+                for metric, value in best_hybrid_metrics.items():
+                    results[f"{metric}_Hybrid"] = value
     
+
+    # Record LLM prediction time
+    llm_pred_end_time = time.time()
+    timing_results["time_llm_predictions_ranking"] = llm_pred_end_time - llm_pred_start_time
+    print(f"LLM predictions completed in {timing_results['time_llm_predictions_ranking']:.2f} seconds")
+
     # Start timing metrics calculation
     metrics_calc_start_time = time.time()
 
     print("Calculating metrics...")
 
+    # Filter test_df to only include specified users if user_ids was provided
+    filtered_test_df = test_df
+    if user_ids is not None and len(user_ids) > 0:
+        filtered_test_df = test_df[test_df['userId'].isin(test_user_ids)]
+        print(f"Filtering test set to {len(filtered_test_df)} ratings from {len(test_user_ids)} users for metrics calculation")
+
+    if not base_predictions_for_eval.empty:
+        # Convert the normalized predictions back to rating scale (0.5-5.0) once
+        base_predictions_for_metrics = base_predictions_for_eval.copy()
+        base_predictions_for_metrics['prediction'] = base_predictions_for_metrics['prediction'].apply(
+            lambda score: 0.5 + ((score + 1) / 2) * 4.5
+        )
+
     # Calculate ranking metrics for each K value using all predictions
     for k in top_k_values:
         # Base algorithm metrics
-        if not base_predictions_for_eval.empty:
+        if not base_predictions_for_metrics.empty:
+            
             # NDCG@K
             ndcg = ndcg_at_k(
-                test_df, base_predictions_for_eval, 
+                filtered_test_df, base_predictions_for_metrics, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1294,7 +2929,7 @@ def evaluate_bivae_ranking_metrics(
             
             # MAP@K
             map_score = map_at_k(
-                test_df, base_predictions_for_eval, 
+                filtered_test_df, base_predictions_for_metrics, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1303,7 +2938,7 @@ def evaluate_bivae_ranking_metrics(
             
             # Precision@K
             precision = precision_at_k(
-                test_df, base_predictions_for_eval, 
+                filtered_test_df, base_predictions_for_metrics, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1312,7 +2947,7 @@ def evaluate_bivae_ranking_metrics(
             
             # Recall@K
             recall = recall_at_k(
-                test_df, base_predictions_for_eval, 
+                filtered_test_df, base_predictions_for_metrics, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1323,7 +2958,7 @@ def evaluate_bivae_ranking_metrics(
         if use_llm and llm_predictions_dataframe is not None and not llm_predictions_dataframe.empty:
             # NDCG@K for LLM
             ndcg_llm = ndcg_at_k(
-                test_df, llm_predictions_dataframe, 
+                filtered_test_df, llm_predictions_dataframe, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1332,7 +2967,7 @@ def evaluate_bivae_ranking_metrics(
             
             # MAP@K for LLM
             map_score_llm = map_at_k(
-                test_df, llm_predictions_dataframe, 
+                filtered_test_df, llm_predictions_dataframe, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1341,7 +2976,7 @@ def evaluate_bivae_ranking_metrics(
             
             # Precision@K for LLM
             precision_llm = precision_at_k(
-                test_df, llm_predictions_dataframe, 
+                filtered_test_df, llm_predictions_dataframe, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1350,7 +2985,7 @@ def evaluate_bivae_ranking_metrics(
             
             # Recall@K for LLM
             recall_llm = recall_at_k(
-                test_df, llm_predictions_dataframe, 
+                filtered_test_df, llm_predictions_dataframe, 
                 col_user="userId", col_item="movieId", 
                 col_rating="rating", col_prediction="prediction", 
                 k=k
@@ -1525,14 +3160,13 @@ def calculate_hit_rates(
     # Initialize the leave-one-out test set
     loo_testset = []
 
-    # Determine users to evaluate
-    if user_ids is None:
-        unique_user_ids = ratings_dataframe_testset_removed['userId'].unique()
-    else:
-        unique_user_ids = user_ids
+    # Determine test users to evaluate - just for metrics calculation
+    test_user_ids = user_ids if user_ids is not None else ratings_dataframe['userId'].unique()
 
-    # Create leave-one-out test set
-    for user_id in unique_user_ids:
+    print(f"Using all users for training, but evaluating metrics on {len(test_user_ids)} users / {len(ratings_dataframe_testset_removed['userId'].unique())} total users")
+
+    # Create leave-one-out test set - only remove one rating for each test user
+    for user_id in test_user_ids:
         user_ratings = ratings_dataframe_testset_removed[ratings_dataframe_testset_removed['userId'] == user_id]
         if len(user_ratings) > 1:
             test_rating_index = random.randint(0, len(user_ratings) - 1)
@@ -1623,7 +3257,8 @@ def calculate_hit_rates(
             
             # Get LLM-enhanced recommendations
             llm_recommendations = find_top_n_similar_movies(
-                preferences_text, descriptions, id_to_title, model_name,
+                algo.__class__.__name__, preferences_text, 
+                descriptions, id_to_title, model_name,
                 chat_format, max_n, api_url, headers, movie_scores_df,
                 prioritize_ratings=prioritize_ratings,
                 prioritize_popular=prioritize_popular,
@@ -1871,6 +3506,7 @@ def calculate_cumulative_hit_rate(
                 
                 # Use the LLM to select the top N movies most similar to the user's preferences.
                 top_n_similiar_movies = find_top_n_similar_movies(
+                    algo.__class__.__name__, # Pass algorithm name
                     user_preferences,
                     movie_descriptions,
                     id_to_title,
@@ -2852,7 +4488,7 @@ def get_imdb_id_by_title(
                             "You must only respond with numbers between 0 and 1 under any and all circumstances without any text, formatting, or markdown. 1 is a sure match, and 0 is certainly not a match.")
 
         # Check if using phi-4 model and wrap system content accordingly
-        if "phi-4-Q6_K" in model_name:
+        if "phi-4-Q6_K" in model_name or "phi-4-Q8_0" in model_name:
             wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
         else:
             wrapped_system = role_instruction
@@ -3167,10 +4803,12 @@ def get_movie_descriptions(
     headers: Dict[str, str],
     max_retries: int,
     delay_between_attempts: int,
+    is_normalized: bool = False,
     timeout: Optional[int] = None
-) -> Dict[Any, str]:
+) -> Dict[Any, Tuple[str, float]]:
     """
-    Retrieves and caches movie descriptions and IMDb metadata for a list of recommended movies.
+    Retrieves and caches movie descriptions and IMDb metadata for a list of recommended movies,
+    returning descriptions along with normalized base prediction scores.
 
     This function processes each movie in the top_n_movies list by:
     1. Checking if description exists in cache
@@ -3202,13 +4840,17 @@ def get_movie_descriptions(
             Maximum number of retry attempts for IMDb API calls
         delay_between_attempts (int):
             Seconds to wait between retry attempts for IMDb API calls
+        is_normalized (bool, optional):
+            Flag indicating if the scores are already normalized. Defaults to False.
         timeout (int, optional):
             Timeout for LLM API requests in seconds. Defaults to none.
 
     Returns:
         Dict[Any, str]:
-            Dictionary mapping movie IDs to their descriptions, using cached descriptions
-            when available and generating new ones as needed
+            Dictionary mapping movie IDs to tuples of (description, normalized_score),
+            using cached descriptions when available and generating new ones as needed.
+            Normalized score is mapped from the base algorithm's prediction (0.5-5.0)
+            to a scale of -1.0 to 1.0.
 
     Notes:
         - Caches are loaded at start and saved after processing all movies
@@ -3218,8 +4860,8 @@ def get_movie_descriptions(
         - Handles IMDb API errors with configurable retries
         - Ensures descriptions are single-line by removing newlines
     """
-    # Initialize an empty dictionary to store movie descriptions
-    descriptions = {}
+    # Initialize an empty dictionary to store movie descriptions and normalized scores
+    descriptions_and_scores: Dict[Any, Tuple[str, float]] = {}
 
     # Load cached data
     cached_descriptions = load_cached_descriptions(descriptions_path, combined_dataframe['movieId'].max())
@@ -3232,8 +4874,21 @@ def get_movie_descriptions(
     new_cached_data = False
 
     # Iterate over the list of top N movies
-    for movie_id, movie_title, _ in top_n_movies:
-        
+    for movie_id, movie_title, est_rating in top_n_movies: # Unpack est_rating
+
+        if is_normalized:
+                # If scores are already normalized to [-1, 1], use them directly
+                normalized_score = est_rating if est_rating is not None else 0.0
+        else:
+            # Handle potential None or invalid ratings
+            if est_rating is None:
+                normalized_score = 0.0  # Neutral score if prediction is missing
+            # Normalize from 0.5-5.0 to -1.0-1.0
+            elif 0.5 <= est_rating <= 5.0:
+                normalized_score = ((est_rating - 0.5) / 4.5) * 2.0 - 1.0
+            else:
+                normalized_score = 0.0  # Default to neutral for invalid scores
+
         current_time = time.time()
         # Check if 10 seconds have passed since the last message print
         if current_time - last_print_time >= 10:
@@ -3303,19 +4958,20 @@ def get_movie_descriptions(
         else:
             description = cached_description
 
-        # Store the description in the return dictionary
-        descriptions[movie_id] = description
+        # Store the description and normalized score in the return dictionary
+        descriptions_and_scores[movie_id] = (description, normalized_score)
 
     # If new data was added to the cache, save it
     if new_cached_data:
         save_cached_descriptions(cached_descriptions, descriptions_path)
         save_movie_scores(movie_scores_df, scores_path)
 
-    return descriptions
+    return descriptions_and_scores
 
 def find_top_n_similar_movies(
+    base_algo_name: str, # Added: Name of the base algorithm used for initial ranking
     user_input: str,
-    movie_descriptions: Dict[Any, str],
+    movie_descriptions: Dict[Any, Tuple[str, float]], # Changed: Now includes normalized score
     id_to_title: Dict[Any, str],
     model_name: str,
     chat_format: str,
@@ -3401,7 +5057,7 @@ def find_top_n_similar_movies(
             List of (movie_id, similarity_score) tuples.
             Sorted by similarity score descending.
             Length = min(n, len(movie_descriptions))
-            Scores are clamped to [-1.0, 1.0].
+            Scores are clamped to [-1, 1].
 
     Prompt Structure:
         The function constructs prompts with:
@@ -3413,6 +5069,7 @@ def find_top_n_similar_movies(
            - IMDb rating (if available)
            - Popularity score (if available)
            - Plot description
+           - Base algorithm's normalized prediction score
 
     Example:
         >>> movies_description = {
@@ -3432,7 +5089,7 @@ def find_top_n_similar_movies(
         ...     scores, favorite_movies=["Toy Story (1995)", "The Lion King (1994)", "Finding Nemo (2003)"],
         ... )
         >>> print(similar)
-        [(260, 0.92), (45517, 0.73)]
+        [(260, 0.9), (45517, 0.7)]
 
     Notes:
         - Uses temperature=0.7 for API calls to balance consistency and creativity
@@ -3445,12 +5102,12 @@ def find_top_n_similar_movies(
 
     # Define the role and instructions with rating scale explanation
     role_instruction = (
-        "You are a movie recommendation assistant that always only responds with a two decimal numbers in the range [-1.00, 1.00] "
+        "You are a movie recommendation assistant that always only responds with numbers in the range [-1, 1]. "
         "Your task is to evaluate how well a movie description aligns with a user's stated preferences and their favorite movies. "
-        "Only respond with a two decimal number between -1.00 and 1.00, where:\n"
-        "-1.00 means the movie goes completely against their preferences,\n"
-        "0.00 means neutral or there isn't enough information,\n"
-        "1.00 is a perfect match. You must respond with only the number, without any additional explanation, text or formatting under all circumstances.\n"
+        "Only respond with a number between -1 and 1, where:\n"
+        "-1 means the movie goes completely against their preferences,\n"
+        "0 means neutral or there isn't enough information,\n"
+        "1 is a perfect match. Consider the base algorithm's prediction as a helpful prior, but prioritize alignment with user preferences and favorite movies. You must respond with only the number, without any additional explanation, text or formatting under all circumstances.\n"
     )
 
     # Add example input and output to guide the LLM
@@ -3465,8 +5122,9 @@ def find_top_n_similar_movies(
         "New movie to evaluate:\n"
         "Movie title: Inception (2010)\n"
         "Movie description: A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O., but his tragic past may doom the project and his team to disaster.\n"
-        "Rate how likely you think the movie aligns with the user's interests (Only respond only with a two decimal number in range [-1.00, 1.00]):\n"
-        "0.91\n"
+        "Base Algorithm (SVD) Normalized Prediction: 0.85\n"
+        "Rate how likely you think the movie aligns with the user's interests (Only respond only with a number in range [-1, 1]):\n"
+        "0.9\n"
         "Example 2:\n"
         "User input: I enjoy light-hearted comedies with a lot of humor.\n"
         "User's favorite movies:\n"
@@ -3477,8 +5135,9 @@ def find_top_n_similar_movies(
         "New movie to evaluate:\n"
         "Movie title: The Dark Knight (2008)\n"
         "Movie description: Set within a year after the events of Batman Begins (2005), Batman, Lieutenant James Gordon, and new District Attorney Harvey Dent successfully begin to round up the criminals that plague Gotham City, until a mysterious and sadistic criminal mastermind known only as \"The Joker\" appears in Gotham, creating a new wave of chaos. Batman's struggle against The Joker becomes deeply personal, forcing him to \"confront everything he believes\" and improve his technology to stop him. A love triangle develops between Bruce Wayne, Dent, and Rachel Dawes.\n"
-        "Rate how likely you think the movie aligns with the user's interests (Only respond only with a two decimal number in range [-1.00, 1.00]):\n"
-        "-0.74\n"
+        "Base Algorithm (SVD) Normalized Prediction: -0.60\n" 
+        "Rate how likely you think the movie aligns with the user's interests (Only respond only with a number in range [-1, 1]):\n"
+        "-0.7\n"
         "Example 3:\n"
         "User input: I am fascinated by historical documentaries.\n"
         "User's favorite movies:\n"
@@ -3489,17 +5148,26 @@ def find_top_n_similar_movies(
         "New movie to evaluate:\n"
         "Movie title: The Lord of the Rings: The Fellowship of the Ring (2001)\n"
         "Movie description: A meek Hobbit from the Shire and eight companions set out on a journey to destroy the powerful One Ring and save Middle-earth from the Dark Lord Sauron.\n"
-        "Rate how likely you think the movie aligns with the user's interests (Only respond with a two decimal number in range [-1.00, 1.00]):\n"
-        "-0.52\n"
+        "Base Algorithm (SVD) Normalized Prediction: -0.45\n"
+        "Rate how likely you think the movie aligns with the user's interests (Only respond with a number in range [-1, 1]):\n"
+        "-0.5\n"
     )
 
     # Add favorite movies to the prompt if provided
-    favorite_movies_prompt= ""
+    favorite_movies_prompt = ""
     if favorite_movies:
         num_to_include = min(num_favorites, len(favorite_movies))
-        favorite_movies_prompt="""User's favorite movies:\n"""
-        for title in favorite_movies[:num_to_include]:
-            favorite_movies_prompt += f"Movie title: {title}\n"
+        favorite_movies_prompt = "User's favorite movies:\n"
+        for item in favorite_movies[:num_to_include]:
+            if isinstance(item, tuple):
+                # If it's a tuple, extract title and rating separately
+                title, rating = item
+                # Convert rating from 0.5-5.0 scale to -1.0 to 1.0 similarity scale
+                similarity = ((rating - 0.5) / 4.5) * 2.0 - 1.0
+                favorite_movies_prompt += f"Movie title: {title}\nSimilarity score: {similarity:.2f}\n"
+            else:
+                # If it's just a title string
+                favorite_movies_prompt += f"Movie title: {item}\n"
 
     # Add date range to the user input if provided
     date_range_prompt = ""
@@ -3507,7 +5175,7 @@ def find_top_n_similar_movies(
         start_year, end_year = eval(date_range) if isinstance(date_range, str) else date_range
         date_range_prompt = f"Preferred Release Date Range: I prefer movies released between {start_year} and {end_year}."
 
-    for movie_id, description in movie_descriptions.items():
+    for movie_id, (description, normalized_score) in movie_descriptions.items(): # Unpack description and score
 
         # Get the title for the prompt
         movie_title = id_to_title[movie_id]
@@ -3537,7 +5205,8 @@ def find_top_n_similar_movies(
 
         prompt_content += (
             f"Movie description: {description}\n"
-            "Rate how likely you think the movie aligns with the user's interests (DO NOT RESPOND WITH ANYTHING OTHER THAN THE RATING OR YOUR RESPONSE WILL BE INVALID. DO NOT EXPLAIN YOUR ANSWER. Only respond with a two decimal number in range [-1.00, 1.00]):\n"
+            f"Base Algorithm ({base_algo_name}) Normalized Prediction: {normalized_score:.2f}\n"
+            "Rate how likely you think the movie aligns with the user's interests (DO NOT RESPOND WITH ANYTHING OTHER THAN THE RATING OR YOUR RESPONSE WILL BE INVALID. DO NOT EXPLAIN YOUR ANSWER. Only respond with a number in the range [-1, 1]):\n"
         )
 
         # Modify the prompt content construction for Gemma 3 models
@@ -3553,7 +5222,7 @@ def find_top_n_similar_movies(
         full_prompt = chat_format.format(prompt=full_prompt)
 
         # Check if using different model types and handle formatting accordingly
-        if "phi-4-Q6_K" or "phi-4-Q8_0" in model_name:
+        if "phi-4-Q6_K" in model_name or "phi-4-Q8_0" in model_name:
             # Use Phi-4's formatting with separate system message
             wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
             
@@ -3743,7 +5412,7 @@ def generate_preferences_from_rated_movies(
     )
 
     # Check if using phi-4 model and wrap system content accordingly
-    if "phi-4-Q6_K" or "phi-4-Q8_0" in model_name:
+    if "phi-4-Q6_K" in model_name or "phi-4-Q8_0" in model_name:
         wrapped_system = f"<|im_start|>system<|im_sep|>{role_instruction}<|im_end|>"
     else:
         wrapped_system = role_instruction
@@ -4781,7 +6450,7 @@ def main():
         }
 
         # Get the desired locally hosted model
-        model_name = list(kobold_models.keys())[2] 
+        model_name = list(kobold_models.keys())[1] 
 
         # Get the corresponding chat format
         chat_format = kobold_models[model_name]
@@ -5217,6 +6886,7 @@ def main():
 
             # Get recommendations using LLM-enhanced method
             top_n_similar_movies = find_top_n_similar_movies(
+                algo.__class__.__name__, # Pass algorithm name
                 user_preferences, 
                 movie_descriptions, 
                 id_to_title, 
@@ -5239,281 +6909,430 @@ def main():
                 movie_title = id_to_title[movie_id]
                 print(f"Movie Title: {movie_title}, Similarity Score: {score}")
     else:
-            
-            # Where metrics calculation begins
-            total_metrics_start_time = time.time()  # Start timing the entire metrics process
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
+        # Where metrics calculation begins
+        total_metrics_start_time = time.time()  # Start timing the entire metrics process
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        metrics_path = os.path.join(base_path, f'metrics_results_{current_time}.csv')
 
-            print("\nMetrics calculation:")
+        print("\nMetrics calculation:")
 
-            # Ask user to choose evaluation method
-            print("\nPlease select the evaluation method:")
-            print("1. Leave-One-Out Validation (calculates hit rates by removing one item per user)")
-            print("2. Stratified Train-Test Split with Ranking Metrics (uses 75/25 split to evaluate various metrics including NDCG, MAP, Precision, Recall)")
-            print("3. Stratified Train-Test Split with Rating Metrics (uses 75/25 split to evaluate RMSE, MAE, R2, Explained Variance)")
-            print("4. Stratified Train-Test Split with Ranking and Rating Metrics (uses 75/25 split to evaluate NDCG, MAP, Precision, Recall, RMSE, MAE, R2, Explained Variance)")
-            print("5. All of the above (1 + 4)")
+        # Ask user to choose evaluation method
+        print("\nPlease select the evaluation method:")
+        print("1. Leave-One-Out Validation (calculates hit rates by removing one item per user)")
+        print("2. Stratified Train-Test Split with Ranking Metrics (uses 75/25 split to evaluate various metrics including NDCG, MAP, Precision, Recall)")
+        print("3. Stratified Train-Test Split with Rating Metrics (uses 75/25 split to evaluate RMSE, MAE, R2, Explained Variance)")
+        print("4. Stratified Train-Test Split with Ranking and Rating Metrics (uses 75/25 split to evaluate NDCG, MAP, Precision, Recall, RMSE, MAE, R2, Explained Variance)")
+        print("5. All of the above (1 + 4)")
+        
+        while True:
+            eval_method = input("Enter your choice (1-5): ").strip()
+            if eval_method in ['1', '2', '3', '4', '5']:
+                break
+            print("Invalid choice. Please enter a number from 1 to 5.")
             
-            while True:
-                eval_method = input("Enter your choice (1-5): ").strip()
-                if eval_method in ['1', '2', '3', '4', '5']:
-                    break
-                print("Invalid choice. Please enter a number from 1 to 5.")
-                
-            # Ask user if they want to use LLM enhancement
-            while True:
-                use_llm_input = input("\nDo you want to use LLM enhancement for recommendations? (y/n): ").strip().lower()
-                if use_llm_input in ['y', 'n', 'yes', 'no']:
-                    use_llm = use_llm_input in ['y', 'yes']
-                    break
-                print("Invalid choice. Please enter y or n.")
-                
-            if use_llm:
-                print("LLM enhancement will be used. Metrics will include both base algorithm and LLM-enhanced results.")
+        # Ask user if they want to use LLM enhancement
+        while True:
+            use_llm_input = input("\nDo you want to use LLM enhancement for recommendations? (y/n): ").strip().lower()
+            if use_llm_input in ['y', 'n', 'yes', 'no']:
+                use_llm = use_llm_input in ['y', 'yes']
+                break
+            print("Invalid choice. Please enter y or n.")
+            
+        if use_llm:
+            print("LLM enhancement will be used. Metrics will include both base algorithm and LLM-enhanced results.")
+        else:
+            print("LLM enhancement will be skipped. Only base algorithm metrics will be calculated.")
+
+        # Initialize algorithms
+        algorithms = {
+            'KNN': KNNBasic(),
+            'SVD': SVD(), 
+            'SVD++': SVDpp()
+        }
+
+        # Define metrics configuration  
+        top_k_values = [10] # Used for NDCG, MAP, Precision, Recall
+
+        # Define thresholds for hit rate calculation
+        n_values = [1, 5, 10]
+
+        # 0.0 for regular hit rate, 4.0 for cumulative hit rate
+        thresholds = [0.0, 4.0]  
+        
+        # Number of favorite movies to use for similarity score calculation
+        num_favorites = 10
+
+        def generate_user_id_list(start=1, end=50):
+            """Generate a list of user IDs from start to end (inclusive)"""
+            return list(range(start, end + 1))
+        
+        # Set user_ids to None to use all users for testing
+        user_ids = None
+
+        # Uncomment the following line to generate a list of user IDs from 1 to 50 for smaller test size
+        # user_ids = generate_user_id_list(start=1, end=50)  
+
+        # Create DataFrame to store results
+        metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric Type', 'Metric', 'Value'])
+
+        # Ask user which algorithms to run
+        selected_algorithms = {}
+        print("\nSelect which algorithms to calculate metrics for:")
+        for algo_name, algo in algorithms.items():
+            response = input(f"Calculate metrics for {algo_name}? (y/n): ").strip().lower()
+            if response == 'y' or response == 'yes':
+                selected_algorithms[algo_name] = algo
+                print(f"Added {algo_name} to calculation queue.")
             else:
-                print("LLM enhancement will be skipped. Only base algorithm metrics will be calculated.")
+                print(f"Skipping {algo_name}.")
 
-            # Initialize algorithms
-            algorithms = {
-                'KNN': KNNBasic(),
-                'SVD': SVD(), 
-                'SVD++': SVDpp()
-            }
-
-            # Define metrics configuration  
-            top_k_values = [10] # Used for NDCG, MAP, Precision, Recall
-
-            # Define thresholds for hit rate calculation
-            n_values = [1, 5, 10]
-
-            # 0.0 for regular hit rate, 4.0 for cumulative hit rate
-            thresholds = [0.0, 4.0]  
-            
-            # Number of favorite movies to use for similarity score calculation
-            num_favorites = 3
-
-            def generate_user_id_list(start=1, end=50):
-                """Generate a list of user IDs from start to end (inclusive)"""
-                return list(range(start, end + 1))
-            
-            # Set user_ids to None for all users
-            user_ids=None
-
-            # Uncomment the following line to generate a list of user IDs from 1 to 50 for smaller test size
-            # user_ids = generate_user_id_list(start=1, end=50)  
-
-            # Create DataFrame to store results
-            metrics_df = pd.DataFrame(columns=['Algorithm', 'Metric Type', 'Metric', 'Value'])
-
-            # Ask user which algorithms to run
-            selected_algorithms = {}
-            print("\nSelect which algorithms to calculate metrics for:")
-            for algo_name, algo in algorithms.items():
-                response = input(f"Calculate metrics for {algo_name}? (y/n): ").strip().lower()
-                if response == 'y' or response == 'yes':
-                    selected_algorithms[algo_name] = algo
-                    print(f"Added {algo_name} to calculation queue.")
+        # Check if BiVAE is supported for the selected evaluation method
+        if eval_method in ['1', '2', '4', '5']:
+            # Add BiVAE to the algorithm options when ranking metrics are selected
+            include_bivae = input(f"\nDo you want to include BiVAE (Bilateral Variational Autoencoder) in metric calculations? (y/n): ").strip().lower()
+            if include_bivae in ['y', 'yes']:
+                print("BiVAE will be included in the ranking metrics evaluation.")
+                
+                # Ask for BiVAE parameters or use defaults (using benchmark values)
+                use_default_params = input("Use default BiVAE parameters? (y/n): ").strip().lower()
+                if use_default_params in ['y', 'yes']:
+                    # Use benchmark parameters
+                    bivae_latent_dim = 100              
+                    bivae_encoder_dims = [200]         
+                    bivae_act_func = "tanh"
+                    bivae_likelihood = "pois"
+                    bivae_num_epochs = 500
+                    bivae_batch_size = 1024
+                    bivae_learning_rate = 0.001
+                    bivae_seed = 42
+                    bivae_use_gpu = True                
+                    bivae_verbose = False               
                 else:
-                    print(f"Skipping {algo_name}.")
-
-            # In your main function, where you ask which algorithms to run
-            if eval_method == '2' or eval_method == '4' or eval_method == '5':
-                # Add BiVAE to the algorithm options when ranking metrics are selected
-                include_bivae = input(f"\nDo you want to include BiVAE (Bilateral Variational Autoencoder) in metric calculations? (y/n): ").strip().lower()
-                if include_bivae in ['y', 'yes']:
-                    print("BiVAE will be included in the ranking metrics evaluation.")
+                    # Ask for custom parameters
+                    bivae_latent_dim = int(input("Enter latent dimension size (default: 100): ") or "100")
+                    encoder_dim = int(input("Enter encoder dimension (default: 200): ") or "200")
+                    bivae_encoder_dims = [encoder_dim] 
+                    bivae_act_func = input("Enter activation function (tanh, sigmoid, relu) (default: tanh): ") or "tanh"
+                    bivae_likelihood = input("Enter likelihood function (pois, bern, gaus) (default: pois): ") or "pois"
+                    bivae_num_epochs = int(input("Enter number of epochs (default: 500): ") or "500")
+                    bivae_batch_size = int(input("Enter batch size (default: 1024): ") or "1024")
+                    bivae_learning_rate = float(input("Enter learning rate (default: 0.001): ") or "0.001")
+                    bivae_seed = int(input("Enter random seed (default: 42): ") or "42")
+                    bivae_use_gpu = input("Use GPU if available? (y/n) (default: y): ").strip().lower() != 'n'
+                    bivae_verbose = input("Show verbose training output? (y/n) (default: n): ").strip().lower() == 'y'
                     
-                    # Ask for BiVAE parameters or use defaults (using benchmark values)
-                    use_default_params = input("Use default BiVAE parameters? (y/n): ").strip().lower()
-                    if use_default_params in ['y', 'yes']:
-                        # Use benchmark parameters
-                        latent_dim = 100              
-                        encoder_dims = [200]         
-                        act_func = "tanh"
-                        likelihood = "pois"
-                        num_epochs = 500
-                        batch_size = 1024
-                        learning_rate = 0.001
-                        seed = 42
-                        use_gpu = True                
-                        verbose = False               
-                    else:
-                        # Ask for custom parameters
-                        latent_dim = int(input("Enter latent dimension size (default: 100): ") or "100")
-                        encoder_dim = int(input("Enter encoder dimension (default: 200): ") or "200")
-                        encoder_dims = [encoder_dim] 
-                        act_func = input("Enter activation function (tanh, sigmoid, relu) (default: tanh): ") or "tanh"
-                        likelihood = input("Enter likelihood function (pois, bern, gaus) (default: pois): ") or "pois"
-                        num_epochs = int(input("Enter number of epochs (default: 500): ") or "500")
-                        batch_size = int(input("Enter batch size (default: 1024): ") or "1024")
-                        learning_rate = float(input("Enter learning rate (default: 0.001): ") or "0.001")
-                        seed = int(input("Enter random seed (default: 42): ") or "42")
-                        use_gpu = input("Use GPU if available? (y/n) (default: y): ").strip().lower() != 'n'
-                        verbose = input("Show verbose training output? (y/n) (default: n): ").strip().lower() == 'y'
-                        
-                    # Add BiVAE to selected algorithms
-                    selected_algorithms["BiVAE"] = "BiVAE"  # Not a real algorithm object, just a marker
+                # Add BiVAE to selected algorithms
+                selected_algorithms["BiVAE"] = "BiVAE"  # Not a real algorithm object, just a marker
 
-            if not selected_algorithms:
-                print("No algorithms selected. Skipping metrics calculation.")
-            else:
-                # Calculate metrics for each selected algorithm
-                for algo_name, algo in selected_algorithms.items():
-                    print(f"\nProcessing {algo_name}...")
-
-                    # Start timing for this specific algorithm
-                    algo_start_time = time.time()
-                    
-                    metrics = {}  # Initialize empty metrics 
-
-                    # Handle BiVAE separately
-                    if algo_name == "BiVAE":
-                        if eval_method in ['2', '4', '5']:
-                            # Ranking metrics for BiVAE
-                            bivae_metrics = evaluate_bivae_ranking_metrics(
-                                ratings_dataframe=ratings_dataframe,
-                                id_to_title=id_to_title,
-                                combined_dataframe=combined_dataframe,
-                                model_name=model_name,
-                                chat_format=chat_format,
-                                descriptions_path=descriptions_path,
-                                api_url=api_url,
-                                headers=headers,
-                                preferences_path=preferences_path,
-                                scores_path=scores_path,
-                                top_k_values=top_k_values,
-                                test_size=0.25,
-                                use_llm=use_llm,
-                                max_retries=5,
-                                delay_between_attempts=1,
-                                num_favorites=num_favorites,
-                                search_count=100,
-                                latent_dim=latent_dim,
-                                encoder_dims=encoder_dims,
-                                act_func=act_func,
-                                likelihood=likelihood,
-                                num_epochs=num_epochs,
-                                batch_size=batch_size,
-                                learning_rate=learning_rate,
-                                seed=seed,
-                                use_gpu=use_gpu,          
-                                verbose=verbose,
-                                user_ids=user_ids         
-                            )
-                            metrics.update(bivae_metrics)
-                            print(f"Ranking metrics for {algo_name}:", {k: v for k, v in bivae_metrics.items() if not k.startswith('time_')})
-                        
-                        # BiVAE doesn't support other evaluation methods
-                        if eval_method in ['1', '3']:
-                            print(f"BiVAE only supports ranking metrics evaluation (method 2/4/5). Skipping method {eval_method}.")
-                            continue
-                    else:
-                        if eval_method == '1' or eval_method == '5':
-                            # Leave-One-Out validation (original method)
-                            leave_one_out_metrics = calculate_hit_rates(
-                                algo, ratings_dataframe, id_to_title, combined_dataframe,
-                                model_name, chat_format, descriptions_path, api_url, headers,
-                                preferences_path, scores_path, n_values=n_values, thresholds=thresholds,
-                                user_ids=user_ids, use_llm=use_llm, num_favorites=num_favorites, search_count=100
-                            )
-                            metrics.update(leave_one_out_metrics)
-                            print(f"Leave-One-Out metrics for {algo_name}:", leave_one_out_metrics)
-                        
-                        if eval_method == '2' or eval_method == '4' or eval_method == '5':
-                            # Stratified train-test split with ranking metrics
-                            ranking_metrics = evaluate_ranking_metrics_with_train_test_split(
-                                algo, ratings_dataframe, id_to_title, combined_dataframe,
-                                model_name, chat_format, descriptions_path, api_url, headers,
-                                preferences_path, scores_path, top_k_values=top_k_values,
-                                test_size=0.25, use_llm=use_llm, num_favorites=num_favorites, search_count=100
-                            )
-                            metrics.update(ranking_metrics)
-                            print(f"Ranking metrics for {algo_name}:", ranking_metrics)
-                        
-                        if eval_method == '3' or eval_method == '4' or eval_method == '5':
-                            # Stratified train-test split with rating metrics
-                            rating_metrics = evaluate_rating_metrics_with_train_test_split(
-                                algo, ratings_dataframe, id_to_title, combined_dataframe,
-                                model_name, chat_format, descriptions_path, api_url, headers,
-                                preferences_path, scores_path, test_size=0.25, use_llm=use_llm, 
-                                num_favorites=num_favorites
-                            )
-                            metrics.update(rating_metrics)
-                            print(f"Rating metrics for {algo_name}:", rating_metrics)
-
-                    # Calculate and store total time for this algorithm
-                    algo_total_time = time.time() - algo_start_time
-                    metrics[f"time_total_algorithm_{algo_name.lower()}"] = algo_total_time
-                    print(f"Total time for {algo_name}: {algo_total_time:.2f} seconds")
-                    
-                    for metric_name, value in metrics.items():
-                        # Handle standard performance metrics (existing code)
-                        if any(metric_type in metric_name.lower() for metric_type in ["ndcg", "map", "precision", "recall", "hit_rate", "cumulative_hit", "rmse", "mae", "r2", "exp_var"]):
-                            is_llm = "_LLM" in metric_name
-                            base_metric = metric_name.replace("_LLM", "")
-                            
-                            # Determine metric type
-                            if "ndcg" in metric_name.lower():
-                                metric_type = "NDCG"
-                            elif "map" in metric_name.lower():
-                                metric_type = "MAP"
-                            elif "precision" in metric_name.lower():
-                                metric_type = "Precision"
-                            elif "recall" in metric_name.lower():
-                                metric_type = "Recall"
-                            elif "rmse" in metric_name.lower():
-                                metric_type = "RMSE"
-                            elif "mae" in metric_name.lower():
-                                metric_type = "MAE"
-                            elif "r2" in metric_name.lower():
-                                metric_type = "R2"
-                            elif "exp_var" in metric_name.lower():
-                                metric_type = "Explained Variance"
-                            elif "hit_rate" in metric_name.lower():
-                                metric_type = "Hit Rate"
-                            else:
-                                metric_type = "Cumulative Hit Rate"
-                            
-                            metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                                'Algorithm': [f'{algo_name} LLM' if is_llm else algo_name],
-                                'Metric Type': [metric_type],
-                                'Metric': [base_metric],
-                                'Value': [value]
-                            }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
-                        
-                        # Handle timing metrics (new code)
-                        elif metric_name.startswith("time_"):
-                            # Convert timing metrics to seconds with 2 decimal places
-                            formatted_value = round(value, 2)
-                            metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                                'Algorithm': [f'{algo_name} LLM' if use_llm else algo_name],
-                                'Metric Type': ['Timing'],
-                                'Metric': [metric_name],
-                                'Value': [formatted_value]
-                            }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
-
-                    print(f"DataFrame after {algo_name}:")
-                    print(metrics_df)
-
-                    # Save after each algorithm with specified float format
-                    metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
-
-                # Calculate total time for all metrics
-                total_metrics_time = time.time() - total_metrics_start_time
+        # Check if LightGCN is supported for the selected evaluation method
+        if eval_method in ['1', '2', '4', '5']:
+            # Add LightGCN to the algorithm options when ranking metrics are selected
+            include_lightgcn = input(f"\nDo you want to include LightGCN (Light Graph Convolutional Network) in metric calculations? (y/n): ").strip().lower()
+            if include_lightgcn in ['y', 'yes']:
+                print("LightGCN will be included in the metrics evaluation.")
                 
-                # Add overall timing metric to the DataFrame
-                metrics_df = pd.concat([metrics_df, pd.DataFrame({
-                    'Algorithm': ['All'],
-                    'Metric Type': ['Timing'],
-                    'Metric': ['time_total_all_metrics'],
-                    'Value': [round(total_metrics_time, 2)]
-                }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+                # Ask for LightGCN parameters or use defaults
+                use_default_params = input("Use default LightGCN parameters? (y/n): ").strip().lower()
+                if use_default_params in ['y', 'yes']:
+                    # Use benchmark parameters
+                    lightgcn_n_layers = 3              
+                    lightgcn_embedding_size = 64         
+                    lightgcn_epochs = 20
+                    lightgcn_batch_size = 1024
+                    lightgcn_learning_rate = 0.005
+                    lightgcn_decay = 0.0001
+                    lightgcn_seed = 42               
+                else:
+                    # Ask for custom parameters
+                    lightgcn_n_layers = int(input("Enter number of layers (default: 3): ") or "3")
+                    lightgcn_embedding_size = int(input("Enter embedding size (default: 64): ") or "64")
+                    lightgcn_epochs = int(input("Enter number of epochs (default: 20): ") or "20")
+                    lightgcn_batch_size = int(input("Enter batch size (default: 1024): ") or "1024")
+                    lightgcn_learning_rate = float(input("Enter learning rate (default: 0.005): ") or "0.005")
+                    lightgcn_decay = float(input("Enter decay/L2 regularization (default: 0.0001): ") or "0.0001")
+                    lightgcn_seed = int(input("Enter random seed (default: 42): ") or "42")
+                    
+                # Add LightGCN to selected algorithms
+                selected_algorithms["LightGCN"] = "LightGCN"  # Not a real algorithm object, just a marker
+                
+        if not selected_algorithms:
+            print("No algorithms selected. Skipping metrics calculation.")
+        else:
+            # Calculate metrics for each selected algorithm
+            for algo_name, algo in selected_algorithms.items():
+                print(f"\nProcessing {algo_name}...")
 
-                # Save the final metrics DataFrame
+                # Start timing for this specific algorithm
+                algo_start_time = time.time()
+                
+                metrics = {}  # Initialize empty metrics 
+
+                # Handle BiVAE separately
+                if algo_name == "BiVAE":
+                    if eval_method in ['1', '5']:
+                        # Leave-One-Out validation for BiVAE
+                        bivae_loo_metrics = calculate_bivae_hit_rates(
+                        ratings_dataframe=ratings_dataframe,
+                        id_to_title=id_to_title,
+                        combined_dataframe=combined_dataframe,
+                        model_name=model_name,
+                        chat_format=chat_format,
+                        descriptions_path=descriptions_path,
+                        api_url=api_url,
+                        headers=headers,
+                        preferences_path=preferences_path,
+                        scores_path=scores_path,
+                        n_values=n_values,
+                        thresholds=thresholds,
+                        use_llm=use_llm,
+                        max_retries=5,
+                        delay_between_attempts=1,
+                        num_favorites=num_favorites,
+                        search_count=100,
+                        latent_dim=bivae_latent_dim,
+                        encoder_dims=bivae_encoder_dims,
+                        act_func=bivae_act_func,
+                        likelihood=bivae_likelihood,
+                        num_epochs=bivae_num_epochs,
+                        batch_size=bivae_batch_size,
+                        learning_rate=bivae_learning_rate,
+                        seed=bivae_seed,
+                        use_gpu=bivae_use_gpu,
+                        verbose=bivae_verbose,
+                        user_ids=user_ids
+                        )
+                        metrics.update(bivae_loo_metrics)
+                        print(f"Leave-One-Out metrics for {algo_name}:", {k: v for k, v in bivae_loo_metrics.items() if not k.startswith('time_')})
+
+                    if eval_method in ['2', '4', '5']:
+                        # Ranking metrics for BiVAE
+                        bivae_metrics = evaluate_bivae_ranking_metrics(
+                            ratings_dataframe=ratings_dataframe,
+                            id_to_title=id_to_title,
+                            combined_dataframe=combined_dataframe,
+                            model_name=model_name,
+                            chat_format=chat_format,
+                            descriptions_path=descriptions_path,
+                            api_url=api_url,
+                            headers=headers,
+                            preferences_path=preferences_path,
+                            scores_path=scores_path,
+                            top_k_values=top_k_values,
+                            test_size=0.25,
+                            use_llm=use_llm,
+                            max_retries=5,
+                            delay_between_attempts=1,
+                            num_favorites=num_favorites,
+                            search_count=100,
+                            latent_dim=bivae_latent_dim,
+                            encoder_dims=bivae_encoder_dims,
+                            act_func=bivae_act_func,
+                            likelihood=bivae_likelihood,
+                            num_epochs=bivae_num_epochs,
+                            batch_size=bivae_batch_size,
+                            learning_rate=bivae_learning_rate,
+                            seed=bivae_seed,
+                            use_gpu=bivae_use_gpu,          
+                            verbose=bivae_verbose,
+                            user_ids=user_ids         
+                        )
+                        metrics.update(bivae_metrics)
+                        print(f"Ranking metrics for {algo_name}:", {k: v for k, v in bivae_metrics.items() if not k.startswith('time_')})
+                    
+                    # BiVAE doesn't support other evaluation methods
+                    if eval_method in ['3']:
+                        print(f"BiVAE currently only supports hit rate and ranking metrics evaluation (methods 1/2/4/5). Skipping.")
+                        continue
+                
+                # Handle LightGCN separately
+                elif algo_name == "LightGCN":
+                    if eval_method in ['1', '5']:
+                        # Leave-One-Out validation for LightGCN
+                        lightgcn_loo_metrics = calculate_lightgcn_hit_rates(
+                            ratings_dataframe=ratings_dataframe,
+                            id_to_title=id_to_title,
+                            combined_dataframe=combined_dataframe,
+                            model_name=model_name,
+                            chat_format=chat_format,
+                            descriptions_path=descriptions_path,
+                            api_url=api_url,
+                            headers=headers,
+                            preferences_path=preferences_path,
+                            scores_path=scores_path,
+                            n_values=n_values,
+                            thresholds=thresholds,
+                            use_llm=use_llm,
+                            max_retries=5,
+                            delay_between_attempts=1,
+                            num_favorites=num_favorites,
+                            search_count=100,
+                            n_layers=lightgcn_n_layers,
+                            embedding_size=lightgcn_embedding_size,
+                            epochs=lightgcn_epochs,
+                            batch_size=lightgcn_batch_size,
+                            learning_rate=lightgcn_learning_rate,
+                            decay=lightgcn_decay,
+                            seed=lightgcn_seed,
+                            user_ids=user_ids
+                        )
+                        metrics.update(lightgcn_loo_metrics)
+                        print(f"Leave-One-Out metrics for {algo_name}:", {k: v for k, v in lightgcn_loo_metrics.items() if not k.startswith('time_')})
+
+                    if eval_method in ['2', '4', '5']:
+                        # Ranking metrics for LightGCN
+                        lightgcn_metrics = evaluate_lightgcn_ranking_metrics(
+                            ratings_dataframe=ratings_dataframe,
+                            id_to_title=id_to_title,
+                            combined_dataframe=combined_dataframe,
+                            model_name=model_name,
+                            chat_format=chat_format,
+                            descriptions_path=descriptions_path,
+                            api_url=api_url,
+                            headers=headers,
+                            preferences_path=preferences_path,
+                            scores_path=scores_path,
+                            top_k_values=top_k_values,
+                            test_size=0.25,
+                            use_llm=use_llm,
+                            max_retries=5,
+                            delay_between_attempts=1,
+                            num_favorites=num_favorites,
+                            search_count=100,
+                            n_layers=lightgcn_n_layers,
+                            embedding_size=lightgcn_embedding_size,
+                            epochs=lightgcn_epochs,
+                            batch_size=lightgcn_batch_size,
+                            learning_rate=lightgcn_learning_rate,
+                            decay=lightgcn_decay,
+                            seed=lightgcn_seed,
+                            user_ids=user_ids         
+                        )
+                        metrics.update(lightgcn_metrics)
+                        print(f"Ranking metrics for {algo_name}:", {k: v for k, v in lightgcn_metrics.items() if not k.startswith('time_')})
+                    
+                    # LightGCN doesn't support other evaluation methods
+                    if eval_method in ['3']:
+                        print(f"LightGCN currently only supports hit rate and ranking metrics evaluation (methods 1/2/4/5). Skipping.")
+                        continue
+                
+                else:
+                    if eval_method == '1' or eval_method == '5':
+                        # Leave-One-Out validation (original method)
+                        leave_one_out_metrics = calculate_hit_rates(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, n_values=n_values, thresholds=thresholds,
+                            user_ids=user_ids, use_llm=use_llm, num_favorites=num_favorites, search_count=100
+                        )
+                        metrics.update(leave_one_out_metrics)
+                        print(f"Leave-One-Out metrics for {algo_name}:", leave_one_out_metrics)
+                    
+                    if eval_method == '2' or eval_method == '4' or eval_method == '5':
+                        # Stratified train-test split with ranking metrics
+                        ranking_metrics = evaluate_ranking_metrics_with_train_test_split(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, top_k_values=top_k_values,
+                            test_size=0.25, use_llm=use_llm, num_favorites=num_favorites, search_count=100
+                        )
+                        metrics.update(ranking_metrics)
+                        print(f"Ranking metrics for {algo_name}:", ranking_metrics)
+                    
+                    if eval_method == '3' or eval_method == '4' or eval_method == '5':
+                        # Stratified train-test split with rating metrics
+                        rating_metrics = evaluate_rating_metrics_with_train_test_split(
+                            algo, ratings_dataframe, id_to_title, combined_dataframe,
+                            model_name, chat_format, descriptions_path, api_url, headers,
+                            preferences_path, scores_path, test_size=0.25, use_llm=use_llm, 
+                            num_favorites=num_favorites
+                        )
+                        metrics.update(rating_metrics)
+                        print(f"Rating metrics for {algo_name}:", rating_metrics)
+
+                # Calculate and store total time for this algorithm
+                algo_total_time = time.time() - algo_start_time
+                metrics[f"time_total_algorithm_{algo_name.lower()}"] = algo_total_time
+                print(f"Total time for {algo_name}: {algo_total_time:.2f} seconds")
+                
+                for metric_name, value in metrics.items():
+                    # Handle standard performance metrics (existing code)
+                    if any(metric_type in metric_name.lower() for metric_type in ["ndcg", "map", "precision", "recall", "hit_rate", "cumulative_hit", "rmse", "mae", "r2", "exp_var"]):
+                        
+                        is_llm = "_LLM" in metric_name
+                        is_hybrid = "_Hybrid" in metric_name
+                        
+                        # Extract base metric name by removing any suffix
+                        base_metric = metric_name.replace("_LLM", "").replace("_Hybrid", "")
+                        
+                        # Determine metric type
+                        if "ndcg" in metric_name.lower():
+                            metric_type = "NDCG"
+                        elif "map" in metric_name.lower():
+                            metric_type = "MAP"
+                        elif "precision" in metric_name.lower():
+                            metric_type = "Precision"
+                        elif "recall" in metric_name.lower():
+                            metric_type = "Recall"
+                        elif "rmse" in metric_name.lower():
+                            metric_type = "RMSE"
+                        elif "mae" in metric_name.lower():
+                            metric_type = "MAE"
+                        elif "r2" in metric_name.lower():
+                            metric_type = "R2"
+                        elif "exp_var" in metric_name.lower():
+                            metric_type = "Explained Variance"
+                        elif "hit_rate" in metric_name.lower():
+                            metric_type = "Hit Rate"
+                        else:
+                            metric_type = "Cumulative Hit Rate"
+
+                        # Determine algorithm display name based on whether it's LLM-enhanced or hybrid
+                        if is_hybrid:
+                            display_algo = f'{algo_name} Hybrid'
+                        elif is_llm:
+                            display_algo = f'{algo_name} LLM'
+                        else:
+                            display_algo = algo_name
+                        
+                        metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                            'Algorithm': [display_algo],
+                            'Metric Type': [metric_type],
+                            'Metric': [base_metric],
+                            'Value': [value]
+                        }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+                    
+                    # Handle timing metrics (new code)
+                    elif metric_name.startswith("time_"):
+                        # Convert timing metrics to seconds with 2 decimal places
+                        formatted_value = round(value, 2)
+                        metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                            'Algorithm': [f'{algo_name} LLM' if use_llm else algo_name],
+                            'Metric Type': ['Timing'],
+                            'Metric': [metric_name],
+                            'Value': [formatted_value]
+                        }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+
+                print(f"DataFrame after {algo_name}:")
+                print(metrics_df)
+
+                # Save after each algorithm with specified float format
                 metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
 
-                print(f"\nMetrics calculation complete. Results saved to {metrics_path}")
+            # Calculate total time for all metrics
+            total_metrics_time = time.time() - total_metrics_start_time
+            
+            # Add overall timing metric to the DataFrame
+            metrics_df = pd.concat([metrics_df, pd.DataFrame({
+                'Algorithm': ['All'],
+                'Metric Type': ['Timing'],
+                'Metric': ['time_total_all_metrics'],
+                'Value': [round(total_metrics_time, 2)]
+            }).astype({'Algorithm': 'str', 'Metric Type': 'str', 'Metric': 'str', 'Value': 'float'})], ignore_index=True)
+
+            # Save the final metrics DataFrame
+            metrics_df.to_csv(metrics_path, index=False, float_format='%.6f')
+
+            print(f"\nMetrics calculation complete. Results saved to {metrics_path}")
 
 if __name__ == "__main__":
     main()
