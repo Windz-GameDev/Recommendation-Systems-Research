@@ -32,7 +32,7 @@ This GRE Research Experience project combines traditional recommendation algorit
 
 Our recent experiments with the MovieLens-Latest-Small dataset demonstrate significant improvements when using LLM enhancement:
 
-### Ranking Metrics (K=10)
+### Ranking Metrics (N=10)
 
 | Algorithm | NDCG@10   | MAP@10    | Precision@10 | Recall@10 |
 | --------- | --------- | --------- | ------------ | --------- |
