@@ -71,7 +71,7 @@ Our recent experiments with the MovieLens-Latest-Small dataset demonstrate signi
 
 5. **LLM-enhanced Similarity Scoring**: Using context-shifted prompts optimized for easy understanding by small models, LLMs generate similarity scores between user preferences and movie descriptions.
 
-6. **Recommendation Refinement**: Base recommendations are refined using LLM-generated similarity scores and weighted hybrid approaches.
+6. **Recommendation Refinement**: Base recommendations are refined using LLM-generated similarity scores.
 
 7. **Comprehensive Evaluation**: The system calculates various metrics to quantify recommendation quality.
 
@@ -83,7 +83,7 @@ The system supports multiple evaluation approaches:
 
 2. **Stratified Train-Test Split with Ranking Metrics**: Uses 75/25 split to evaluate NDCG, MAP, Precision, Recall.
 
-3. **Stratified Train-Test Split with Rating Metrics**: Uses 75/25 split to evaluate RMSE, MAE, R², Explained Variance.
+3. **Stratified Train-Test Split with Rating Metrics**: Uses 75/25 split to evaluate RMSE, MAE, R², Explained Variance. (Note: we don't focus on predicting the exact rating scores, but rather the best overall ordering of the recommendations)
 
 4. **Combined Evaluation**: Performs both ranking and rating metrics evaluation.
 
@@ -158,7 +158,6 @@ The system supports multiple evaluation approaches:
 ## Advanced Features
 
 - **Context-Optimized Prompts**: Special prompt formatting optimized for Phi-4 and similar models
-- **Hybrid Weighting**: Automatic optimization of weights between traditional and LLM components for some algorithms
 - **User Preference Generation**: LLM-based generation of preference summaries from rated movies
 - **Date Range Preference**: Automatic detection of preferred movie release date ranges
 - **Rating/Popularity Preferences**: Detection of user preferences for highly-rated or popular movies
