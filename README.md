@@ -10,7 +10,7 @@ This GRE Research Experience project combines traditional recommendation algorit
 
 2. **Hybrid Architecture**: Combines traditional collaborative filtering algorithms with LLM-based content understanding for improved recommendations.
 
-3. **Multiple Algorithm Support**: Implements SVD, SVD++, KNN, BiVAE, and LightGCN algorithms with LLM enhancement.
+3. **Multiple Algorithm Support**: Implements SVD, and SVD++ algorithms with LLM enhancement.
 
 4. **Comprehensive Evaluation**: Provides detailed metrics including NDCG, MAP, Precision, Recall, Hit Rate, and Cumulative Hit Rate.
 
@@ -65,7 +65,7 @@ Our recent experiments with the MovieLens-Latest-Small dataset demonstrate signi
 
 2. **User Preference Input**: Users provide ratings and preferences which are used as input for both traditional algorithms and LLM enhancement.
 
-3. **Base Recommendations**: Traditional algorithms (SVD, SVD++, KNN, BiVAE, LightGCN) generate initial recommendations.
+3. **Base Recommendations**: Traditional algorithms (SVD and SVD++) generate initial recommendations.
 
 4. **Movie Description Retrieval**: Descriptions are retrieved from IMDb or generated using LLMs when unavailable, then cached to avoid redundant processing.
 
