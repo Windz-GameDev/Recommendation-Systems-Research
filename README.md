@@ -4,6 +4,8 @@
 
 This GRE Research Experience project combines traditional recommendation algorithms with Large Language Models (LLMs) to provide personalized and context-aware movie recommendations. Optimized to work efficiently with compact models like Phi-4 running locally through KoboldCPP, the system demonstrates significant improvements in recommendation quality across multiple metrics compared to traditional SVD methods alone.
 
+The link to the paper can be found at: https://arxiv.org/abs/2507.07251
+
 ## Key Features
 
 1. **Small Model Optimization**: Specifically designed to work efficiently with Phi-4 running locally through KoboldCPP with context shifting to reduce reprocessing.
